@@ -127,7 +127,10 @@ SYSTEM_PROMPT = (
     f"(«Готовы?», «Киты, тюлени или моржи?», «Сколько лет длилась война?») — на это ВСЕГДА дай ответ "
     f"по существу, даже если вопрос короткий или звучит небрежно. Никогда не выводи {SKIP_TOKEN} на "
     f"случай (б).\n"
-    "- Если для ответа нужны свежие/точные данные (цифры, новости, конкуренты) — используй поиск.\n"
+    "- ОБЯЗАТЕЛЬНО используй поиск (вызови инструмент), если в вопросе есть слова "
+    "«последний/последняя/новый/новая/актуальный/актуальная/сейчас/в этом году» ИЛИ "
+    "спрашивают конкретную версию/дату/цифру/название конкурента, которых нет в контексте — "
+    "не отвечай по памяти в этих случаях, память может быть устаревшей.\n"
     "- 1-3 предложения, разговорный тон, без буллетов.\n"
     "- ЗАПРЕЩЕНА markdown-разметка (никаких **, #, -, `` ` `` и т.п.) и LaTeX/математическая "
     "нотация (никаких $...$, \\sqrt, ^2, нижних индексов через _) — интерфейс показывает текст "
@@ -976,7 +979,22 @@ def apply_screen_capture_protection(attempt=0):
     if windows:
         for w in windows:
             w.setSharingType_(AppKit.NSWindowSharingNone)
-        print(f"content protection applied to {len(windows)} window(s) after {attempt} retries")
+            # "поверх всех столов": окно следует за активным Space вместо того,
+            # чтобы пропадать при переключении (CanJoinAllSpaces), не двигаясь
+            # при этом само (Stationary), и остаётся видимым в полноэкранных
+            # приложениях/звонках (FullScreenAuxiliary).
+            w.setCollectionBehavior_(
+                AppKit.NSWindowCollectionBehaviorCanJoinAllSpaces
+                | AppKit.NSWindowCollectionBehaviorStationary
+                | AppKit.NSWindowCollectionBehaviorFullScreenAuxiliary
+            )
+        # Скрыть из Dock и Cmd+Tab (аналог "skip taskbar" на macOS) — окно
+        # остаётся кликабельным и принимает ввод, просто не всплывает как
+        # отдельное приложение в переключателе.
+        AppKit.NSApplication.sharedApplication().setActivationPolicy_(
+            AppKit.NSApplicationActivationPolicyAccessory
+        )
+        print(f"content protection + all-spaces + hidden-from-dock applied to {len(windows)} window(s) after {attempt} retries")
         return
     if attempt < 20:
         AppHelper.callLater(0.15, apply_screen_capture_protection, attempt + 1)
