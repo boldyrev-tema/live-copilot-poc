@@ -9,7 +9,7 @@
 ```bash
 python3 -m venv ~/Desktop/live_copilot_poc/venv
 source ~/Desktop/live_copilot_poc/venv/bin/activate
-pip install assemblyai sounddevice numpy requests pywebview pyobjc-framework-Cocoa pypdf python-docx pynput
+pip install speechmatics-rt sounddevice numpy requests pywebview pyobjc-framework-Cocoa pypdf python-docx pynput
 cd ~/Desktop/live_copilot_poc
 python3 live_copilot_poc.py
 ```
@@ -18,17 +18,68 @@ python3 live_copilot_poc.py
 системный Python на macOS тащит древний Tk/иногда ломает pywebview. Если venv
 создаётся не тем python — указать явно: `/opt/homebrew/bin/python3.12 -m venv ...`
 
-## Нужные ключи (лежат в `~/.credentials/`, уже настроены)
+## Нужные ключи (у Артёма лежат в `~/.credentials/`, уже настроены)
 
-- `assemblyai_api_key.env` — потоковая транскрипция (Universal-Streaming,
-  оба канала). Аккаунт зарегистрирован через Google-логин Артёма, бесплатный
-  тир: $50 кредита без карты (Universal-Streaming — $0.15/час, этого хватит
-  надолго для PoC-тестов)
+- `speechmatics_api_key.env` — потоковая транскрипция (оба канала, два
+  параллельных сеанса). Бесплатно: 100 кредитов без карты (регистрация через
+  Google-логин)
 - `groq_api_key.env` — LLM-подсказки (openai/gpt-oss-120b)
 - `tavily_api_key.env` — веб-поиск (модель сама решает гуглить или нет через tool-calling)
 - `openrouter_api_key.env` — vision-модель для разбора скриншотов
   (`nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free` — единственная из
   протестированных, что давала адекватные ответы; ~15-20 сек на ответ)
+
+(`assemblyai` в коде больше не используется — заменён на Speechmatics, см.
+"Известные ограничения" ниже про причину)
+
+## Запуск на чужой машине (для Рината)
+
+Ключи в коде НЕ зашиты — они читаются из файлов на диске (`~/.credentials/`),
+которых у тебя нет. Без своих ключей приложение не стартует. Порядок:
+
+**1. Заведи свои ключи (все — бесплатно, без карты):**
+
+| Файл | Где взять |
+|---|---|
+| `~/.credentials/speechmatics_api_key.env` | [portal.speechmatics.com](https://portal.speechmatics.com) — регистрация (можно через Google), 100 бесплатных кредитов |
+| `~/.credentials/groq_api_key.env` | [console.groq.com](https://console.groq.com) — регистрация, бесплатный тир |
+| `~/.credentials/tavily_api_key.env` | [tavily.com](https://tavily.com) — регистрация, бесплатный тир |
+| `~/.credentials/openrouter_api_key.env` | [openrouter.ai](https://openrouter.ai) — регистрация, используемая модель бесплатная |
+
+Каждый файл — одна строка в формате `КЛЮЧ=значение`, например:
+```
+speechmatics_api_key.env:  SPEECHMATICS_API_KEY=твой_ключ
+groq_api_key.env:          GROQ_API_KEY=твой_ключ
+tavily_api_key.env:        TAVILY_API_KEY=твой_ключ
+openrouter_api_key.env:    OPENROUTER_API_KEY=твой_ключ
+```
+
+**2. Склонируй репозиторий:**
+```bash
+git clone https://github.com/boldyrev-tema/live-copilot-poc.git
+cd live-copilot-poc
+```
+
+**3. Собери venv и поставь зависимости** (нужен именно Homebrew Python 3.12,
+см. предупреждение выше) — команды из раздела "Запуск" выше, только с путём
+до своей папки.
+
+**4. Запусти `python3 live_copilot_poc.py`.** macOS спросит разрешения при
+первом запуске — дай все три, иначе конкретная часть не заработает:
+- **Микрофон** — без него не слышит твой голос
+- **Screen Recording** (Экранная запись) — без него не работает захват
+  системного звука (реплики собеседника) через `SystemAudioDump`, и не
+  работают обе кнопки скриншота
+- **Input Monitoring** (Мониторинг ввода) — без него не сработает глобальный
+  хоткей `Cmd+Shift+J`
+
+Если после выдачи разрешения всё равно не работает — обычно помогает
+перезапустить сам процесс (macOS иногда не подхватывает разрешение "на лету").
+
+**5. Проверка, что всё живое:** скажи что-нибудь в микрофон — реплика должна
+появиться в ленте с меткой "Ты". Дай кому-то на созвоне (или включи видео с
+вопросом) — реплика "Собеседника" тоже должна появиться, а на вопрос — сама
+всплыть подсказка. Кодовая фраза для форс-ответа — "хороший вопрос".
 
 ## Архитектура
 
