@@ -18,6 +18,12 @@ python3 live_copilot_poc.py
 системный Python на macOS тащит древний Tk/иногда ломает pywebview. Если venv
 создаётся не тем python — указать явно: `/opt/homebrew/bin/python3.12 -m venv ...`
 
+**Требуется Mac на Apple Silicon (M1/M2/M3/M4).** Бинарник
+`cheating-daddy/src/assets/SystemAudioDump`, который отвечает за захват
+системного звука (реплики "Собеседника"), собран только под arm64 — на Intel
+Mac он не запустится, и канал "Собеседник" просто не будет работать
+(микрофон/"Ты" при этом не пострадает).
+
 ## Нужные ключи (пример — уже лежат в `~/.credentials/` у автора этой копии)
 
 - `speechmatics_api_key.env` — потоковая транскрипция (оба канала, два
