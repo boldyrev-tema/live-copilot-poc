@@ -945,6 +945,13 @@ class Api:
         battlecards.clear()
         js("renderBattlecards([])")
 
+    def remove_battlecard(self, index):
+        try:
+            battlecards.pop(int(index))
+        except (IndexError, ValueError, TypeError):
+            return
+        js(f"renderBattlecards({json.dumps(battlecards)})")
+
     def pick_file(self):
         global file_context
         result = window.create_file_dialog(
@@ -1254,12 +1261,28 @@ function escapeHtml(s) {
   return div.innerHTML;
 }
 
+let battlecardsCache = [];
+
 function renderBattlecards(cards) {
+  battlecardsCache = cards;
   const el = document.getElementById('bcList');
-  el.innerHTML = cards.map(c => {
+  el.innerHTML = cards.map((c, i) => {
     const short = c[1].length > 40 ? c[1].slice(0, 40) + '…' : c[1];
-    return '▸ ' + escapeHtml(c[0]) + ' → ' + escapeHtml(short);
-  }).join('<br>');
+    return '<div style="display:flex; justify-content:space-between; align-items:center; gap:6px;">' +
+      '<span style="cursor:pointer;" title="Клик — загрузить в поля для правки" onclick="editBattlecard(' + i + ')">▸ ' +
+      escapeHtml(c[0]) + ' → ' + escapeHtml(short) + '</span>' +
+      '<button onclick="pywebview.api.remove_battlecard(' + i + ')" ' +
+      'style="background:none; border:none; color:var(--text-dim); cursor:pointer; font-size:11px; padding:0; flex-shrink:0;">✕</button>' +
+      '</div>';
+  }).join('');
+}
+
+function editBattlecard(i) {
+  const card = battlecardsCache[i];
+  if (!card) return;
+  document.getElementById('bcTrigger').value = card[0];
+  document.getElementById('bcResponse').value = card[1];
+  pywebview.api.remove_battlecard(i);
 }
 
 function setFileStatus(name, chars) {
