@@ -175,6 +175,10 @@ running = True
 user_context = ""
 file_context = ""
 user_notes = ""  # ручные шпаргалки/формулы — маленькие, всегда в промпте (как Заметки у ShadowHint)
+battlecards = []  # list of (trigger_phrase_lower, response_text) — заготовленный ответ по
+                  # ключевой фразе, БЕЗ вызова LLM вообще (как живые battlecards у Clari
+                  # Copilot) — быстрее и надёжнее для частых возражений ("дорого", "у
+                  # конкурента дешевле"), чем ждать генерацию модели
 knowledge_base_chunks = []  # list of (filename, chunk_text, embedding_vector) — крупные документы,
                             # в промпт попадают только релевантные куски (как База знаний у ShadowHint)
 KB_CHUNK_SIZE = 700
@@ -403,6 +407,14 @@ def is_smalltalk(text: str) -> bool:
     return any(phrase in lowered for phrase in SMALLTALK_PHRASES)
 
 
+def match_battlecard(text: str):
+    lowered = text.lower()
+    for trigger, response in battlecards:
+        if trigger in lowered:
+            return response
+    return None
+
+
 def handle_final_turn(speaker: str, text: str):
     text = text.strip()
     if not text:
@@ -438,9 +450,19 @@ def handle_final_turn(speaker: str, text: str):
         pending_hotword_armed_at = None
         return
 
-    if speaker == "Собеседник" and looks_like_question(text) and not is_smalltalk(text):
-        set_status("вопрос замечен, спрашиваю…")
-        ask_for_suggestion(use_search=auto_search_enabled)
+    if speaker == "Собеседник":
+        # Battlecard проверяется на ЛЮБОЙ реплике собеседника, не только на
+        # вопросах — возражения ("у конкурентов дешевле") часто вообще не
+        # вопрос по форме, а looks_like_question() их бы пропустил.
+        battlecard_answer = match_battlecard(text)
+        if battlecard_answer:
+            set_status("боевая карточка сработала")
+            update_suggestion_ui(battlecard_answer, source="battlecard")
+        elif looks_like_question(text) and not is_smalltalk(text):
+            set_status("вопрос замечен, спрашиваю…")
+            ask_for_suggestion(use_search=auto_search_enabled)
+        else:
+            set_status("слушаю")
     else:
         set_status("слушаю")
 
@@ -853,6 +875,18 @@ class Api:
         knowledge_base_chunks.clear()
         js("addKbFile(null, 0)")
 
+    def add_battlecard(self, trigger, response):
+        trigger = (trigger or "").strip().lower()
+        response = (response or "").strip()
+        if not trigger or not response:
+            return
+        battlecards.append((trigger, response))
+        js(f"renderBattlecards({json.dumps(battlecards)})")
+
+    def clear_battlecards(self):
+        battlecards.clear()
+        js("renderBattlecards([])")
+
     def pick_file(self):
         global file_context
         result = window.create_file_dialog(
@@ -1050,6 +1084,17 @@ HTML = r"""
     <textarea id="notesBox" rows="2" placeholder="Шпаргалки, формулы, определения…" oninput="onNotesChange()"></textarea>
   </div>
 
+  <div class="section">
+    <div class="section-label">
+      Боевые карточки <span style="text-transform:none; opacity:.6">— мгновенно, без ИИ</span>
+      <button class="link-btn" onclick="pywebview.api.clear_battlecards()">очистить</button>
+    </div>
+    <input type="text" id="bcTrigger" placeholder="Триггер-фраза (например: дорого)" style="margin-bottom:4px">
+    <textarea id="bcResponse" rows="2" placeholder="Готовый ответ на это возражение…"></textarea>
+    <button class="link-btn" onclick="addBattlecard()">+ добавить карточку</button>
+    <div id="bcList" style="font-size:11px; color:var(--text-dim); margin-top:4px; line-height:1.5"></div>
+  </div>
+
   <div class="section-label" style="margin: 0 16px;">AI Assistant</div>
   <div class="feed" id="feed"></div>
 
@@ -1120,7 +1165,8 @@ function addSuggestion(text, source) {
   bubble.className = 'bubble' + (source === 'screenshot' || source === 'report' ? ' screenshot' : '');
   const now = new Date();
   const ts = now.toLocaleTimeString('ru-RU', {hour: '2-digit', minute: '2-digit', second: '2-digit'});
-  const label = source === 'screenshot' ? '📷 Скриншот' : source === 'report' ? '📊 Отчёт' : '✦ AI Assistant';
+  const label = source === 'screenshot' ? '📷 Скриншот' : source === 'report' ? '📊 Отчёт' :
+    source === 'battlecard' ? '🃏 Карточка' : '✦ AI Assistant';
   bubble.innerHTML = '<div class="head"><span class="who">' + label +
     '</span><span class="time">' + ts + '</span></div><div class="text"></div>';
   bubble.querySelector('.text').textContent = text;
@@ -1142,6 +1188,20 @@ function clearKb() { pywebview.api.clear_knowledge_base(); }
 
 function onNotesChange() {
   pywebview.api.update_notes(document.getElementById('notesBox').value);
+}
+
+function addBattlecard() {
+  const trigger = document.getElementById('bcTrigger').value.trim();
+  const response = document.getElementById('bcResponse').value.trim();
+  if (!trigger || !response) return;
+  pywebview.api.add_battlecard(trigger, response);
+  document.getElementById('bcTrigger').value = '';
+  document.getElementById('bcResponse').value = '';
+}
+
+function renderBattlecards(cards) {
+  const el = document.getElementById('bcList');
+  el.innerHTML = cards.map(c => '▸ ' + c[0] + ' → ' + (c[1].length > 40 ? c[1].slice(0, 40) + '…' : c[1])).join('<br>');
 }
 
 function setFileStatus(name, chars) {

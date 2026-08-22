@@ -93,6 +93,32 @@ check("math: ^ -> 'в степени'", m.strip_math_markup("8^2") == "8 в ст
 check("math: _ -> 'с индексом'", m.strip_math_markup("x_1") == "x с индексом 1")
 check("math: убирает **bold**", m.strip_math_markup("**важно**") == "важно")
 
+m.battlecards.clear()
+m.battlecards.append(("дорого", "У нас гибкая система скидок при годовой оплате."))
+check("battlecard: триггер найден по подстроке", m.match_battlecard("ваш продукт слишком дорого стоит") is not None)
+check("battlecard: правильный ответ", "скидок" in m.match_battlecard("это дорого"))
+check("battlecard: нет триггера -> None", m.match_battlecard("расскажите о себе") is None)
+m.battlecards.clear()
+
+print()
+print("=== Бэкенд: handle_final_turn — battlecard перехватывает ДО обычного LLM-вопроса ===")
+
+captured = {}
+orig_ask = m.ask_for_suggestion
+orig_update_ui = m.update_suggestion_ui
+m.ask_for_suggestion = lambda *a, **kw: captured.setdefault("llm_called", True)
+m.update_suggestion_ui = lambda text, source="ai": captured.setdefault("ui", (text, source))
+m.transcript_lines.clear()
+m.battlecards.clear()
+m.battlecards.append(("дешевле", "У конкурентов нет нашей интеграции с CRM — это и есть разница в цене."))
+m.handle_final_turn("Собеседник", "у конкурентов дешевле, почему у вас так")
+check("battlecard: сработал вместо LLM (LLM не вызван)", "llm_called" not in captured, captured)
+check("battlecard: ответ ушёл в UI с source=battlecard", captured.get("ui", (None, None))[1] == "battlecard", captured)
+m.ask_for_suggestion = orig_ask
+m.update_suggestion_ui = orig_update_ui
+m.battlecards.clear()
+m.transcript_lines.clear()
+
 print()
 print("=== Бэкенд: интеграционные тесты (реальные вызовы API) ===")
 
@@ -269,6 +295,18 @@ window.pywebview = { api: new Proxy({}, {
 
   setStatus('это очень длинный статус который точно длиннее двадцати шести символов');
   check('setStatus: текст обрезан с многоточием', document.getElementById('status').textContent.endsWith('…'));
+
+  document.getElementById('bcTrigger').value = 'дорого';
+  document.getElementById('bcResponse').value = 'Скидка 20% при годовой оплате.';
+  addBattlecard();
+  check('addBattlecard: api.add_battlecard вызван с триггером и ответом',
+        window.__calls.some(c => c[0]==='add_battlecard' && c[1][0]==='дорого' && c[1][1]==='Скидка 20% при годовой оплате.'));
+  check('addBattlecard: поля очищены после добавления', document.getElementById('bcTrigger').value === '' && document.getElementById('bcResponse').value === '');
+  renderBattlecards([['дорого', 'Скидка 20% при годовой оплате.']]);
+  check('renderBattlecards: карточка отрисована в списке', document.getElementById('bcList').textContent.includes('дорого'));
+
+  addSuggestion('Скидка 20%', 'battlecard');
+  check('addSuggestion(battlecard): label корректный', document.getElementById('feed').lastElementChild.querySelector('.who').textContent.includes('Карточка'));
 
   return results;
 }""")
