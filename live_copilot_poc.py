@@ -1048,7 +1048,7 @@ HTML = r"""
                        overflow: hidden; text-overflow: ellipsis; display: -webkit-box;
                        -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
 
-  .section { margin: 0 16px 10px; }
+  .section { margin: 0 16px 6px; }
   .section-label { font-size: 10px; color: var(--text-dim); text-transform: uppercase;
                     letter-spacing: 0.03em; margin-bottom: 4px; display: flex; justify-content: space-between; align-items: center; }
   .file-chip { display: none; align-items: center; gap: 6px; background: var(--purple-bg);
@@ -1147,7 +1147,7 @@ HTML = r"""
       <button class="link-btn" onclick="pywebview.api.clear_battlecards()">очистить</button>
     </div>
     <input type="text" id="bcTrigger" placeholder="Триггер-фраза (например: дорого)" style="margin-bottom:4px">
-    <textarea id="bcResponse" rows="2" placeholder="Готовый ответ на это возражение…"></textarea>
+    <textarea id="bcResponse" rows="1" placeholder="Готовый ответ на это возражение…"></textarea>
     <button class="link-btn" onclick="addBattlecard()">+ добавить карточку</button>
     <div id="bcList" style="font-size:11px; color:var(--text-dim); margin-top:4px; line-height:1.5"></div>
   </div>
