@@ -899,17 +899,18 @@ HTML = r"""
              overflow: hidden; text-overflow: ellipsis; max-width: 140px; }
 
   .pill-row { display: flex; gap: 6px; padding: 0 16px 10px; flex-wrap: wrap; }
+  /* Нейтральное "стекло" по умолчанию для всех кнопок — акцентный цвет
+     оставлен только для активного/включённого состояния (.pill.active),
+     как в Control Center у macOS, а не сплошная заливка на каждой кнопке. */
   .pill {
-    border: none; border-radius: 999px; padding: 6px 12px; font-size: 12px; font-weight: 600;
-    cursor: pointer; color: white; display: flex; align-items: center; gap: 5px;
-    transition: filter 0.15s ease, transform 0.1s ease;
+    border: 1px solid var(--border); border-radius: 999px; padding: 6px 12px;
+    font-size: 12px; font-weight: 500; cursor: pointer; color: var(--text);
+    background: rgba(255,255,255,0.06); display: flex; align-items: center; gap: 5px;
+    transition: background 0.15s ease, transform 0.08s ease;
   }
-  .pill:hover { filter: brightness(1.12); }
+  .pill:hover { background: rgba(255,255,255,0.11); }
   .pill:active { transform: scale(0.96); }
-  .pill.green { background: var(--green); color: #0A0A0A; }
-  .pill.blue { background: var(--blue); }
-  .pill.purple { background: var(--purple); }
-  .pill.purple.off { background: rgba(255,255,255,0.08); color: var(--text-dim); }
+  .pill.active { background: rgba(139, 92, 246, 0.24); border-color: rgba(139, 92, 246, 0.5); color: #D6C8FF; }
 
   .monitor { display: flex; margin: 0 16px 10px; border-radius: 12px; background: var(--panel);
              border: 1px solid var(--border); overflow: hidden; }
@@ -966,16 +967,16 @@ HTML = r"""
   </div>
 
   <div class="pill-row">
-    <button class="pill blue" onclick="pywebview.api.ask_screenshot(false)"
+    <button class="pill" onclick="pywebview.api.ask_screenshot(false)"
             title="Весь экран, без взаимодействия"><span>📷</span><span>Скрин</span></button>
-    <button class="pill blue" onclick="pywebview.api.ask_screenshot(true)"
+    <button class="pill" onclick="pywebview.api.ask_screenshot(true)"
             title="Выделить область или окно мышью — точнее, меньше шума для ИИ"><span>🖼️</span><span>Область</span></button>
-    <button class="pill purple" id="searchBtn" onclick="toggleSearch()"
+    <button class="pill active" id="searchBtn" onclick="toggleSearch()"
             title="Разрешить ИИ гуглить, если сам решит, что нужны свежие данные (не поиск по твоему клику)">
       <span>🔍</span><span>Поиск</span>
     </button>
-    <button class="pill purple off" id="transcriptBtn" onclick="toggleTranscript()"><span>📝</span><span>Транскрипт</span></button>
-    <button class="pill blue" onclick="pywebview.api.get_report()"
+    <button class="pill" id="transcriptBtn" onclick="toggleTranscript()"><span>📝</span><span>Транскрипт</span></button>
+    <button class="pill" onclick="pywebview.api.get_report()"
             title="Отчёт по всей сессии: сильные/слабые места, оценка"><span>📊</span><span>Отчёт</span></button>
   </div>
 
@@ -1035,16 +1036,15 @@ let searchOn = true;
 
 function toggleSearch() {
   searchOn = !searchOn;
-  const btn = document.getElementById('searchBtn');
-  btn.classList.toggle('off', !searchOn);
+  document.getElementById('searchBtn').classList.toggle('active', searchOn);
   pywebview.api.set_search(searchOn);
 }
 
 function toggleTranscript() {
   const el = document.getElementById('transcriptSection');
-  const on = el.style.display !== 'none';
-  el.style.display = on ? 'none' : 'block';
-  document.getElementById('transcriptBtn').classList.toggle('off', on);
+  const willShow = el.style.display === 'none';
+  el.style.display = willShow ? 'block' : 'none';
+  document.getElementById('transcriptBtn').classList.toggle('active', willShow);
 }
 
 function setStatus(text) {

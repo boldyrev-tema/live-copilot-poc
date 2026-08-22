@@ -206,7 +206,7 @@ window.pywebview = { api: new Proxy({}, {
 
   const searchBtn = document.getElementById('searchBtn');
   toggleSearch();
-  check('toggleSearch: класс off появился после клика', searchBtn.classList.contains('off') === true);
+  check('toggleSearch: класс active пропал после клика (был включён по умолчанию)', searchBtn.classList.contains('active') === false);
   check('toggleSearch: api.set_search вызван с false', window.__calls.some(c => c[0]==='set_search' && c[1][0]===false));
   toggleSearch();
 
