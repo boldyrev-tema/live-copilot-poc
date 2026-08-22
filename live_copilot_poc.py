@@ -1105,6 +1105,7 @@ HTML = r"""
     <button class="pill" id="transcriptBtn" onclick="toggleTranscript()"><span>📝</span><span>Транскрипт</span></button>
     <button class="pill" onclick="pywebview.api.get_report()"
             title="Отчёт по всей сессии: сильные/слабые места, оценка"><span>📊</span><span>Отчёт</span></button>
+    <button class="pill" id="battlecardsBtn" onclick="toggleBattlecards()"><span>🃏</span><span>Карточки</span></button>
     <label class="pill" style="width:100%; box-sizing:border-box;"
            title="Скажи это вслух, чтобы форсировать подсказку. Меняется, когда закончишь печатать (Enter или клик мимо), не на каждую букву.">
       <span style="white-space:nowrap; opacity:.65;">🗝️ Кодовое слово:</span>
@@ -1148,7 +1149,7 @@ HTML = r"""
   </div>
 
 
-  <div class="section">
+  <div class="section" id="battlecardsSection" style="display:none">
     <div class="section-label">
       Боевые карточки <span style="text-transform:none; opacity:.6">— мгновенно, без ИИ</span>
       <button class="link-btn" onclick="pywebview.api.clear_battlecards()">очистить</button>
@@ -1178,6 +1179,13 @@ function toggleTranscript() {
   const willShow = el.style.display === 'none';
   el.style.display = willShow ? 'block' : 'none';
   document.getElementById('transcriptBtn').classList.toggle('active', willShow);
+}
+
+function toggleBattlecards() {
+  const el = document.getElementById('battlecardsSection');
+  const willShow = el.style.display === 'none';
+  el.style.display = willShow ? 'block' : 'none';
+  document.getElementById('battlecardsBtn').classList.toggle('active', willShow);
 }
 
 function setStatus(text) {
