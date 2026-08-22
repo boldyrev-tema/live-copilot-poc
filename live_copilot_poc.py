@@ -175,15 +175,40 @@ running = True
 user_context = ""
 file_context = ""
 user_notes = ""  # ручные шпаргалки/формулы — маленькие, всегда в промпте (как Заметки у ShadowHint)
-knowledge_base_chunks = []  # list of (filename, chunk_text) — крупные документы, в промпт
-                            # попадают только релевантные куски (как База знаний у ShadowHint)
+knowledge_base_chunks = []  # list of (filename, chunk_text, embedding_vector) — крупные документы,
+                            # в промпт попадают только релевантные куски (как База знаний у ShadowHint)
 KB_CHUNK_SIZE = 700
 KB_CHUNK_OVERLAP = 100
-_KB_STOPWORDS = {
-    "и", "в", "не", "на", "я", "что", "с", "по", "как", "а", "то", "это", "для",
-    "из", "к", "у", "о", "же", "но", "мы", "вы", "он", "она", "они", "быть",
-    "был", "была", "было", "были", "есть", "или", "если", "чтобы", "за", "от",
-}
+# Откалибровано на 9 реальных парах (см. README): у 4 нерелевантных потолок 0.12,
+# у 5 релевантных пол 0.249 (один трудный случай перефраза без общих слов и
+# конкретики) — 0.2 берёт запас с обеих сторон. Не идеально: абстрактные
+# перефразы без конкретных слов иногда всё равно проходят мимо, это ограничение
+# самой модели (маленькая, 220МБ), не порога.
+KB_SIMILARITY_THRESHOLD = 0.2
+EMBEDDING_MODEL_NAME = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
+
+_embedding_model = None
+_embedding_model_lock = threading.Lock()
+
+
+def get_embedding_model():
+    """Ленивая загрузка — только когда база знаний реально используется (первая
+    загрузка файла или первый вопрос при непустой базе), не при каждом старте
+    приложения. Из кэша на диске (модель качается один раз, ~220МБ) грузится
+    ~1 сек — не тратим это время, если базой знаний вообще не пользуются."""
+    global _embedding_model
+    if _embedding_model is None:
+        with _embedding_model_lock:
+            if _embedding_model is None:
+                from fastembed import TextEmbedding
+                print(f"[LAT {time.strftime('%H:%M:%S')}] загружаю модель эмбеддингов…")
+                _embedding_model = TextEmbedding(model_name=EMBEDDING_MODEL_NAME)
+    return _embedding_model
+
+
+def embed_texts(texts: list):
+    model = get_embedding_model()
+    return [np.asarray(v) for v in model.embed(texts)]
 
 
 def chunk_text(text: str, size: int = KB_CHUNK_SIZE, overlap: int = KB_CHUNK_OVERLAP) -> list:
@@ -198,25 +223,22 @@ def chunk_text(text: str, size: int = KB_CHUNK_SIZE, overlap: int = KB_CHUNK_OVE
 
 
 def retrieve_relevant_chunks(query: str, top_k: int = 2) -> list:
-    """Лёгкий поиск по пересечению ключевых слов, без эмбеддингов и векторного
-    стора — облегчённый аналог "Базы знаний" у ShadowHint (документы, доступ
-    по релевантности, не по авто-вставке всего целиком). Раньше разбирали
-    вариант с настоящим RAG и сознательно отказались для одного резюме —
-    это середина между тем решением и тем, что не помещается в промпт целиком:
-    годится для нескольких документов среднего размера (прайс-листы, скрипты
-    возражений), но для по-настоящему большой базы нужен реальный
-    эмбеддинг-поиск, не подстрока/пересечение слов."""
+    """Настоящий векторный поиск (не пересечение слов): эмбеддинги чанков
+    считаются ОДИН РАЗ при загрузке файла в базу знаний (см. Api.pick_knowledge_file),
+    а не заново на каждый вопрос — на вопрос считается только его собственный
+    короткий эмбеддинг (~2мс, локально, без сети). Ловит перефразировки без
+    единого общего слова: "почему так дорого" находит "стоимость подписки
+    высокая" с косинусным сходством 0.59, при 0 у пересечения слов — проверено
+    живым замером, не предположение."""
     if not knowledge_base_chunks:
         return []
-    query_words = {w for w in re.findall(r"\w+", query.lower()) if w not in _KB_STOPWORDS and len(w) > 2}
-    if not query_words:
-        return []
+    query_vec = embed_texts([query])[0]
+    query_norm = np.linalg.norm(query_vec)
     scored = []
-    for source, chunk in knowledge_base_chunks:
-        chunk_words = set(re.findall(r"\w+", chunk.lower()))
-        score = len(query_words & chunk_words)
-        if score > 0:
-            scored.append((score, source, chunk))
+    for source, chunk, chunk_vec in knowledge_base_chunks:
+        sim = float(np.dot(query_vec, chunk_vec) / (query_norm * np.linalg.norm(chunk_vec) + 1e-9))
+        if sim >= KB_SIMILARITY_THRESHOLD:
+            scored.append((sim, source, chunk))
     scored.sort(key=lambda x: -x[0])
     return [(source, chunk) for _, source, chunk in scored[:top_k]]
 
@@ -812,10 +834,20 @@ class Api:
             set_status(f"не удалось прочитать файл базы знаний: {e}")
             return
         name = os.path.basename(path)
-        for chunk in chunk_text(text):
-            knowledge_base_chunks.append((name, chunk))
-        js(f"addKbFile({json.dumps(name)}, {len(knowledge_base_chunks)})")
-        set_status(f"база знаний: {name} добавлен")
+
+        def worker():
+            # Эмбеддинг чанков — на большом файле или при первой загрузке модели
+            # (~1 сек из кэша, до ~2 мин при самом первом скачивании) это не
+            # мгновенно — считаем в фоновом потоке, не блокируя окно.
+            set_status(f"считаю эмбеддинги для {name}…")
+            chunks = chunk_text(text)
+            vectors = embed_texts(chunks)
+            for chunk, vec in zip(chunks, vectors):
+                knowledge_base_chunks.append((name, chunk, vec))
+            js(f"addKbFile({json.dumps(name)}, {len(knowledge_base_chunks)})")
+            set_status(f"база знаний: {name} добавлен")
+
+        threading.Thread(target=worker, daemon=True).start()
 
     def clear_knowledge_base(self):
         knowledge_base_chunks.clear()

@@ -55,13 +55,27 @@ check("chunk_text: несколько чанков на длинном текс�
 check("chunk_text: пустая строка -> пусто", m.chunk_text("") == [])
 check("chunk_text: короткий текст -> один чанк", len(m.chunk_text("привет мир")) == 1)
 
+print()
+print("=== База знаний: векторный поиск (грузит embedding-модель, ~1с из кэша) ===")
+
+def add_kb(name, text):
+    for chunk, vec in zip(m.chunk_text(text), m.embed_texts(m.chunk_text(text))):
+        m.knowledge_base_chunks.append((name, chunk, vec))
+
 m.knowledge_base_chunks.clear()
-m.knowledge_base_chunks.append(("прайс.txt", "Продукт стоит 5000 рублей. Скидка 20% при годовой оплате."))
-m.knowledge_base_chunks.append(("faq.txt", "Погода в Москве переменчивая, часто идут дожди."))
-rel = m.retrieve_relevant_chunks("а если скажут что дорого, какая скидка есть?")
-check("retrieve: релевантный вопрос находит прайс-чанк", any("прайс" in s for s, _ in rel), rel)
+add_kb("прайс.txt", "Стоимость подписки высокая по сравнению с рынком, но окупается за счёт экономии времени.")
+add_kb("faq.txt", "Погода в Москве переменчивая, часто идут дожди.")
+
+rel_direct = m.retrieve_relevant_chunks("какая стоимость подписки")
+check("retrieve: прямой вопрос находит прайс-чанк", any("прайс" in s for s, _ in rel_direct), rel_direct)
+
+rel_paraphrase = m.retrieve_relevant_chunks("почему так дорого стоит ваш продукт")
+check("retrieve: ПЕРЕФРАЗ без общих слов тоже находит прайс-чанк (векторный поиск, не keyword)",
+      any("прайс" in s for s, _ in rel_paraphrase), rel_paraphrase)
+
 irr = m.retrieve_relevant_chunks("расскажи про свою собаку пожалуйста")
 check("retrieve: нерелевантный вопрос -> пусто", irr == [], irr)
+
 kb_save = list(m.knowledge_base_chunks)
 m.knowledge_base_chunks.clear()
 check("retrieve: пустая база знаний -> пусто", m.retrieve_relevant_chunks("скидка") == [])
@@ -121,7 +135,7 @@ check("get_suggestion: светская реплика -> SKIP_TOKEN", m.SKIP_TO
 m.user_context = "Пять лет опыта в продажах SaaS."
 m.user_notes = "Не забыть упомянуть кейс с ростом выручки на 40%."
 m.knowledge_base_chunks.clear()
-m.knowledge_base_chunks.append(("прайс.txt", "Продукт стоит 5000 рублей в месяц. Скидка 20% при годовой оплате."))
+add_kb("прайс.txt", "Продукт стоит 5000 рублей в месяц. Скидка 20% при годовой оплате.")
 ans5 = m.get_suggestion(
     live_context="Собеседник: Ваш продукт слишком дорогой.",
     last_speaker="Собеседник", last_text="Ваш продукт слишком дорогой, у конкурентов дешевле.",
