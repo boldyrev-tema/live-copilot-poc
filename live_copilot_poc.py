@@ -174,6 +174,61 @@ transcript_lines = []  # list of (speaker, text)
 running = True
 user_context = ""
 file_context = ""
+user_notes = ""  # ручные шпаргалки/формулы — маленькие, всегда в промпте (как Заметки у ShadowHint)
+knowledge_base_chunks = []  # list of (filename, chunk_text) — крупные документы, в промпт
+                            # попадают только релевантные куски (как База знаний у ShadowHint)
+KB_CHUNK_SIZE = 700
+KB_CHUNK_OVERLAP = 100
+_KB_STOPWORDS = {
+    "и", "в", "не", "на", "я", "что", "с", "по", "как", "а", "то", "это", "для",
+    "из", "к", "у", "о", "же", "но", "мы", "вы", "он", "она", "они", "быть",
+    "был", "была", "было", "были", "есть", "или", "если", "чтобы", "за", "от",
+}
+
+
+def chunk_text(text: str, size: int = KB_CHUNK_SIZE, overlap: int = KB_CHUNK_OVERLAP) -> list:
+    chunks = []
+    start = 0
+    while start < len(text):
+        chunk = text[start:start + size].strip()
+        if chunk:
+            chunks.append(chunk)
+        start += size - overlap
+    return chunks
+
+
+def retrieve_relevant_chunks(query: str, top_k: int = 2) -> list:
+    """Лёгкий поиск по пересечению ключевых слов, без эмбеддингов и векторного
+    стора — облегчённый аналог "Базы знаний" у ShadowHint (документы, доступ
+    по релевантности, не по авто-вставке всего целиком). Раньше разбирали
+    вариант с настоящим RAG и сознательно отказались для одного резюме —
+    это середина между тем решением и тем, что не помещается в промпт целиком:
+    годится для нескольких документов среднего размера (прайс-листы, скрипты
+    возражений), но для по-настоящему большой базы нужен реальный
+    эмбеддинг-поиск, не подстрока/пересечение слов."""
+    if not knowledge_base_chunks:
+        return []
+    query_words = {w for w in re.findall(r"\w+", query.lower()) if w not in _KB_STOPWORDS and len(w) > 2}
+    if not query_words:
+        return []
+    scored = []
+    for source, chunk in knowledge_base_chunks:
+        chunk_words = set(re.findall(r"\w+", chunk.lower()))
+        score = len(query_words & chunk_words)
+        if score > 0:
+            scored.append((score, source, chunk))
+    scored.sort(key=lambda x: -x[0])
+    return [(source, chunk) for _, source, chunk in scored[:top_k]]
+
+
+def build_kb_block(query: str) -> str:
+    chunks = retrieve_relevant_chunks(query)
+    if not chunks:
+        return ""
+    body = "\n\n".join(f"[{source}]\n{chunk}" for source, chunk in chunks)
+    return f"Релевантные фрагменты базы знаний:\n{body}\n\n"
+
+
 window = None  # заполняется после создания окна
 auto_search_enabled = True
 hotkey_listener = None  # pynput.keyboard.GlobalHotKeys, чтобы не собрался GC
@@ -509,6 +564,9 @@ def web_search(query: str) -> str:
 def get_suggestion(live_context: str, last_speaker: str, last_text: str, use_search: bool,
                     direct_question: bool = False) -> str:
     user_ctx_block = f"Контекст пользователя:\n{user_context}\n\n" if user_context.strip() else ""
+    notes_block = f"Заметки пользователя:\n{user_notes}\n\n" if user_notes.strip() else ""
+    user_ctx_block += notes_block
+    user_ctx_block += build_kb_block(last_text)
     if direct_question:
         # Вопрос пришёл через кодовую фразу/хоткей от самого пользователя — явно
         # помечаем это, иначе модель по общему правилу "нет реплики от Собеседника"
@@ -595,6 +653,8 @@ def ask_about_screenshot(region: bool = False):
             os.remove(shot_path)
 
             user_ctx_block = f"Контекст пользователя:\n{user_context}\n\n" if user_context.strip() else ""
+            if user_notes.strip():
+                user_ctx_block += f"Заметки пользователя:\n{user_notes}\n\n"
             prompt_text = (
                 f"{user_ctx_block}Если на скриншоте задача, вопрос, код для проверки или упражнение — "
                 "РЕШИ его. Сначала кратко покажи ход решения по шагам (что с чем считаешь/почему), "
@@ -653,6 +713,49 @@ def ask_about_screenshot(region: bool = False):
     threading.Thread(target=worker, daemon=True).start()
 
 
+def generate_session_report():
+    """Отчёт после сессии — фича, которой не было вообще, хотя у 2 из 3 крупных
+    конкурентов (Final Round AI, LockedIn AI) она есть. Дёшево: транскрипт уже
+    и так пишется в файл, это просто ещё один вызов LLM поверх уже накопленных
+    transcript_lines, без новой инфраструктуры."""
+    def worker():
+        try:
+            if not transcript_lines:
+                set_status("транскрипта пока нет для отчёта")
+                return
+            set_status("готовлю отчёт…")
+            full_transcript = "\n".join(f"{s}: {t}" for s, t in transcript_lines)
+            report_prompt = (
+                "Ты коуч по собеседованиям. Ниже — транскрипт тренировочной сессии (реплики "
+                "«Ты» — сам кандидат, «Собеседник» — интервьюер). Составь короткий отчёт: "
+                "1) сильные стороны ответов кандидата (2-3 пункта); 2) слабые места и что "
+                "стоило ответить иначе (2-3 пункта, с конкретной репликой-примером из "
+                "транскрипта); 3) общая оценка готовности от 1 до 10 с кратким обоснованием. "
+                "Пиши по-русски, разговорным текстом, без markdown-разметки, 6-10 предложений "
+                "всего.\n\n"
+                f"Транскрипт:\n{full_transcript}"
+            )
+            resp = requests.post(
+                "https://api.groq.com/openai/v1/chat/completions",
+                headers={"Authorization": f"Bearer {GROQ_API_KEY}"},
+                json={
+                    "messages": [{"role": "user", "content": report_prompt}],
+                    "max_tokens": 500, "model": LLM_MODEL, "reasoning_effort": "low",
+                },
+                timeout=30,
+            )
+            resp.raise_for_status()
+            report = strip_math_markup(resp.json()["choices"][0]["message"]["content"].strip())
+            print(f"[LAT {time.strftime('%H:%M:%S')}] report ready: {report[:60]!r}")
+            update_suggestion_ui(report, source="report")
+            set_status("слушаю")
+        except Exception as e:
+            print(f"generate_session_report failed: {e}")
+            set_status(f"сбой отчёта: {e}")
+
+    threading.Thread(target=worker, daemon=True).start()
+
+
 def extract_text_from_file(path: str) -> str:
     ext = os.path.splitext(path)[1].lower()
     if ext in (".txt", ".md"):
@@ -687,6 +790,36 @@ class Api:
 
     def update_context(self, manual_text):
         recompute_user_context(manual_text or "")
+
+    def update_notes(self, text):
+        global user_notes
+        user_notes = text or ""
+
+    def get_report(self):
+        generate_session_report()
+
+    def pick_knowledge_file(self):
+        result = window.create_file_dialog(
+            webview.OPEN_DIALOG,
+            file_types=("Документы (*.txt;*.md;*.pdf;*.docx)", "Все файлы (*.*)"),
+        )
+        if not result:
+            return
+        path = result[0]
+        try:
+            text = extract_text_from_file(path).strip()
+        except Exception as e:
+            set_status(f"не удалось прочитать файл базы знаний: {e}")
+            return
+        name = os.path.basename(path)
+        for chunk in chunk_text(text):
+            knowledge_base_chunks.append((name, chunk))
+        js(f"addKbFile({json.dumps(name)}, {len(knowledge_base_chunks)})")
+        set_status(f"база знаний: {name} добавлен")
+
+    def clear_knowledge_base(self):
+        knowledge_base_chunks.clear()
+        js("addKbFile(null, 0)")
 
     def pick_file(self):
         global file_context
@@ -842,6 +975,8 @@ HTML = r"""
       <span>🔍</span><span>Поиск</span>
     </button>
     <button class="pill purple off" id="transcriptBtn" onclick="toggleTranscript()"><span>📝</span><span>Транскрипт</span></button>
+    <button class="pill blue" onclick="pywebview.api.get_report()"
+            title="Отчёт по всей сессии: сильные/слабые места, оценка"><span>📊</span><span>Отчёт</span></button>
   </div>
 
   <div class="monitor">
@@ -862,11 +997,24 @@ HTML = r"""
 
   <div class="section">
     <div class="section-label">
-      Контекст
+      Контекст <span style="text-transform:none; opacity:.6">— всегда в промпте</span>
       <button class="link-btn" onclick="pywebview.api.pick_file()">загрузить файл</button>
     </div>
     <div class="file-chip" id="fileChip">📄 <span id="fileChipText"></span> <button onclick="clearFile()">✕</button></div>
-    <textarea id="contextBox" rows="2" placeholder="Заметки вручную…" oninput="onContextChange()"></textarea>
+    <textarea id="contextBox" rows="2" placeholder="Резюме/факты о себе текстом…" oninput="onContextChange()"></textarea>
+  </div>
+
+  <div class="section">
+    <div class="section-label">
+      База знаний <span style="text-transform:none; opacity:.6">— по релевантности</span>
+      <button class="link-btn" onclick="pywebview.api.pick_knowledge_file()">добавить файл</button>
+    </div>
+    <div class="file-chip" id="kbChip">📚 <span id="kbChipText"></span> <button onclick="clearKb()">✕</button></div>
+  </div>
+
+  <div class="section">
+    <div class="section-label">Заметки <span style="text-transform:none; opacity:.6">— всегда в промпте</span></div>
+    <textarea id="notesBox" rows="2" placeholder="Шпаргалки, формулы, определения…" oninput="onNotesChange()"></textarea>
   </div>
 
   <div class="section-label" style="margin: 0 16px;">AI Assistant</div>
@@ -937,15 +1085,31 @@ function addSuggestion(text, source) {
   const feed = document.getElementById('feed');
   const stick = isNearBottom(feed);
   const bubble = document.createElement('div');
-  bubble.className = 'bubble' + (source === 'screenshot' ? ' screenshot' : '');
+  bubble.className = 'bubble' + (source === 'screenshot' || source === 'report' ? ' screenshot' : '');
   const now = new Date();
   const ts = now.toLocaleTimeString('ru-RU', {hour: '2-digit', minute: '2-digit', second: '2-digit'});
-  bubble.innerHTML = '<div class="head"><span class="who">' +
-    (source === 'screenshot' ? '📷 Скриншот' : '✦ AI Assistant') +
+  const label = source === 'screenshot' ? '📷 Скриншот' : source === 'report' ? '📊 Отчёт' : '✦ AI Assistant';
+  bubble.innerHTML = '<div class="head"><span class="who">' + label +
     '</span><span class="time">' + ts + '</span></div><div class="text"></div>';
   bubble.querySelector('.text').textContent = text;
   feed.appendChild(bubble);
   if (stick) feed.scrollTop = feed.scrollHeight;
+}
+
+function addKbFile(name, totalChunks) {
+  const chip = document.getElementById('kbChip');
+  if (name) {
+    chip.style.display = 'flex';
+    document.getElementById('kbChipText').textContent = name + ' (' + totalChunks + ' фрагм. всего)';
+  } else {
+    chip.style.display = 'none';
+  }
+}
+
+function clearKb() { pywebview.api.clear_knowledge_base(); }
+
+function onNotesChange() {
+  pywebview.api.update_notes(document.getElementById('notesBox').value);
 }
 
 function setFileStatus(name, chars) {
