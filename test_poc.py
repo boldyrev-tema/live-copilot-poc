@@ -151,6 +151,19 @@ ans3 = m.get_suggestion(
 check("get_suggestion: поиск реально вызван на маркере свежести", "q" in called, called)
 m.web_search = orig_search
 
+captured_payload = {}
+orig_post = m.requests.post
+def spy_post(url, **kw):
+    if "tavily" in url:
+        captured_payload.update(kw.get("json", {}))
+    return orig_post(url, **kw)
+m.requests.post = spy_post
+m.web_search("тестовый запрос")
+m.requests.post = orig_post
+check("web_search: запрашивает 6 результатов, не 3 (живой тест поймал: с 3 топ-результаты "
+      "были устаревшим блогом, правильный источник был только 5-м)",
+      captured_payload.get("max_results") == 6, captured_payload)
+
 ans4 = m.get_suggestion(
     live_context="Собеседник: Как у вас дела сегодня?",
     last_speaker="Собеседник", last_text="Как у вас дела сегодня?",
@@ -304,6 +317,11 @@ window.pywebview = { api: new Proxy({}, {
   check('addBattlecard: поля очищены после добавления', document.getElementById('bcTrigger').value === '' && document.getElementById('bcResponse').value === '');
   renderBattlecards([['дорого', 'Скидка 20% при годовой оплате.']]);
   check('renderBattlecards: карточка отрисована в списке', document.getElementById('bcList').textContent.includes('дорого'));
+
+  renderBattlecards([['<script>x</script>', 'ответ с <b>тегом</b> внутри']]);
+  const bcListEl = document.getElementById('bcList');
+  check('renderBattlecards: HTML в тексте карточки экранирован, не выполняется как разметка',
+        bcListEl.querySelectorAll('script, b').length === 0 && bcListEl.textContent.includes('<script>'));
 
   addSuggestion('Скидка 20%', 'battlecard');
   check('addSuggestion(battlecard): label корректный', document.getElementById('feed').lastElementChild.querySelector('.who').textContent.includes('Карточка'));

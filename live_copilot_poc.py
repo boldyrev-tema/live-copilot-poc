@@ -131,6 +131,10 @@ SYSTEM_PROMPT = (
     "«последний/последняя/новый/новая/актуальный/актуальная/сейчас/в этом году» ИЛИ "
     "спрашивают конкретную версию/дату/цифру/название конкурента, которых нет в контексте — "
     "не отвечай по памяти в этих случаях, память может быть устаревшей.\n"
+    "- Среди результатов поиска источники противоречат друг другу по датам — ОБЫЧНОЕ дело "
+    "(старые статьи индексируются наравне с новыми). Бери версию/цифру с САМОЙ ПОЗДНЕЙ явно "
+    "указанной датой публикации, официальный источник (доки, GitHub releases, сайт продукта) "
+    "важнее блога/статьи с советами.\n"
     "- 1-3 предложения, разговорный тон, без буллетов.\n"
     "- ЗАПРЕЩЕНА markdown-разметка (никаких **, #, -, `` ` `` и т.п.) и LaTeX/математическая "
     "нотация (никаких $...$, \\sqrt, ^2, нижних индексов через _) — интерфейс показывает текст "
@@ -594,10 +598,14 @@ def ask_for_suggestion(use_search: bool, override_question: str = None):
 
 
 def web_search(query: str) -> str:
+    # max_results=3 живым тестом ловил на "какая последняя версия React" —
+    # топ-3 результата были все либо устаревшие блоги (19.1.0, март 2025),
+    # либо не по теме; правильный ответ (19.2.8, официальный GitHub Releases)
+    # был только 5-м результатом. С max_results=6 модель его видит.
     resp = requests.post(
         "https://api.tavily.com/search",
         headers={"Authorization": f"Bearer {TAVILY_API_KEY}"},
-        json={"query": query, "max_results": 3},
+        json={"query": query, "max_results": 6},
         timeout=15,
     )
     resp.raise_for_status()
@@ -1199,9 +1207,18 @@ function addBattlecard() {
   document.getElementById('bcResponse').value = '';
 }
 
+function escapeHtml(s) {
+  const div = document.createElement('div');
+  div.textContent = s;
+  return div.innerHTML;
+}
+
 function renderBattlecards(cards) {
   const el = document.getElementById('bcList');
-  el.innerHTML = cards.map(c => '▸ ' + c[0] + ' → ' + (c[1].length > 40 ? c[1].slice(0, 40) + '…' : c[1])).join('<br>');
+  el.innerHTML = cards.map(c => {
+    const short = c[1].length > 40 ? c[1].slice(0, 40) + '…' : c[1];
+    return '▸ ' + escapeHtml(c[0]) + ' → ' + escapeHtml(short);
+  }).join('<br>');
 }
 
 function setFileStatus(name, chars) {
