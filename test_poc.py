@@ -199,6 +199,19 @@ if "text" in report_holder:
     check("report: source == 'report'", report_holder["source"] == "report")
     check("report: упоминает PostgreSQL (сильная сторона)", "postgres" in report_holder["text"].lower())
 
+print()
+print("=== Отчёт: слишком короткий транскрипт НЕ должен идти в LLM (живой баг: модель выдумывала цитаты) ===")
+m.transcript_lines.clear()
+m.transcript_lines.append(("Собеседник", "Привет"))
+short_holder = {}
+m.update_suggestion_ui = lambda text, source="ai": short_holder.update(text=text)
+m.generate_session_report()
+time.sleep(2)
+m.update_suggestion_ui = orig_update_ui
+check("report: короткий транскрипт (мало реплик 'Ты') -> LLM не вызывается, отчёт не генерируется",
+      "text" not in short_holder, short_holder)
+m.transcript_lines.clear()
+
 m.user_context = ""
 m.user_notes = ""
 m.knowledge_base_chunks.clear()
