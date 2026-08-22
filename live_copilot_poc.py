@@ -1098,6 +1098,12 @@ HTML = r"""
     <button class="pill" id="transcriptBtn" onclick="toggleTranscript()"><span>📝</span><span>Транскрипт</span></button>
     <button class="pill" onclick="pywebview.api.get_report()"
             title="Отчёт по всей сессии: сильные/слабые места, оценка"><span>📊</span><span>Отчёт</span></button>
+    <label class="pill" title="Кодовое слово — скажи вслух, чтобы форсировать подсказку. Меняется, когда закончишь печатать (Enter или клик мимо), не на каждую букву.">
+      <span>🗝️</span>
+      <input type="text" id="hotwordBox" value="хороший вопрос" onchange="onHotwordChange()"
+             style="background:transparent; border:none; color:var(--text); font-size:12px;
+                    font-weight:500; width:112px; padding:0; outline:none;">
+    </label>
   </div>
 
   <div class="monitor">
@@ -1133,10 +1139,6 @@ HTML = r"""
     <div class="file-chip" id="kbChip">📚 <span id="kbChipText"></span> <button onclick="clearKb()">✕</button></div>
   </div>
 
-  <div class="section">
-    <div class="section-label">Кодовое слово <span style="text-transform:none; opacity:.6">— форсирует подсказку голосом</span></div>
-    <input type="text" id="hotwordBox" value="хороший вопрос" oninput="onHotwordChange()">
-  </div>
 
   <div class="section">
     <div class="section-label">

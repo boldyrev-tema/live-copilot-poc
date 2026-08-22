@@ -211,7 +211,9 @@ ans_nobio = m.get_suggestion(
     last_speaker="Собеседник", last_text="Расскажите о своём опыте с Python.",
 )
 check("get_suggestion: пустой контекст, личный вопрос -> признаёт нехватку данных, не выдумывает",
-      "нет данных" in ans_nobio.lower() or "нет информации" in ans_nobio.lower(), ans_nobio)
+      any(p in ans_nobio.lower() for p in
+          ("нет данных", "нет информации", "недостаточно данных", "не хватает данных", "нет сведений")),
+      ans_nobio)
 time.sleep(8)
 
 m.user_context = "Пять лет опыта в продажах SaaS. Не забыть упомянуть кейс с ростом выручки на 40%."
