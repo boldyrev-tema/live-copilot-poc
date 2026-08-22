@@ -1036,15 +1036,15 @@ HTML = r"""
   .pill:active { transform: scale(0.96); }
   .pill.active { background: rgba(139, 92, 246, 0.24); border-color: rgba(139, 92, 246, 0.5); color: #D6C8FF; }
 
-  .monitor { display: flex; margin: 0 16px 10px; border-radius: 12px; background: var(--panel);
+  .monitor { display: flex; margin: 0 16px 6px; border-radius: 10px; background: var(--panel);
              border: 1px solid var(--border); overflow: hidden; }
-  .monitor .cell { flex: 1; padding: 8px 10px; min-width: 0; }
+  .monitor .cell { flex: 1; padding: 5px 8px; min-width: 0; }
   .monitor .cell + .cell { border-left: 1px solid var(--border); }
-  .monitor .head { display: flex; align-items: center; gap: 5px; font-size: 10px;
+  .monitor .head { display: flex; align-items: center; gap: 5px; font-size: 9px;
                    font-weight: 700; color: var(--text-dim); text-transform: uppercase;
                    letter-spacing: 0.03em; }
-  .monitor .dot { width: 6px; height: 6px; }
-  .monitor .preview { font-size: 12px; margin-top: 4px; color: var(--text);
+  .monitor .dot { width: 5px; height: 5px; }
+  .monitor .preview { font-size: 11px; margin-top: 2px; color: var(--text);
                        overflow: hidden; text-overflow: ellipsis; display: -webkit-box;
                        -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
 
