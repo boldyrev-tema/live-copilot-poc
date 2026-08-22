@@ -1322,7 +1322,7 @@ if __name__ == "__main__":
     api = Api()
     window = webview.create_window(
         "Live Copilot", html=HTML, js_api=api,
-        width=380, height=680, x=40, y=40,
+        width=400, height=880, x=40, y=40,
         frameless=True, easy_drag=True, transparent=True, on_top=True,
     )
     window.events.closed += on_closed
