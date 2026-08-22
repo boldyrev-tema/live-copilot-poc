@@ -123,22 +123,22 @@ print()
 print("=== Бэкенд: интеграционные тесты (реальные вызовы API) ===")
 
 m.user_context = "Пять лет опыта в React."
-m.user_notes = ""
 m.knowledge_base_chunks.clear()
 
 ans = m.get_suggestion(
     live_context="Собеседник: Расскажите о вашем опыте с React.",
     last_speaker="Собеседник", last_text="Расскажите о вашем опыте с React.",
-    use_search=False,
 )
 check("get_suggestion: использует контекст (упомянут React)", "react" in ans.lower(), ans)
+time.sleep(8)  # Groq free tier: 8000 токенов/мин — разносим реальные вызовы, чтобы не упереться
 
 ans2 = m.get_suggestion(
     live_context="Ты: хороший вопрос сколько будет два плюс два",
     last_speaker="Ты", last_text="сколько будет два плюс два",
-    use_search=False, direct_question=True,
+    direct_question=True,
 )
 check("get_suggestion: direct_question отвечает по существу", "четыре" in ans2.lower() or "4" in ans2, ans2)
+time.sleep(8)
 
 called = {}
 orig_search = m.web_search
@@ -146,9 +146,9 @@ m.web_search = lambda q: (called.setdefault("q", q), orig_search(q))[1]
 ans3 = m.get_suggestion(
     live_context="Собеседник: Какая сейчас последняя версия Python?",
     last_speaker="Собеседник", last_text="Какая сейчас последняя версия Python?",
-    use_search=True,
 )
-check("get_suggestion: поиск реально вызван на маркере свежести", "q" in called, called)
+check("get_suggestion: поиск реально вызван на маркере свежести (поиск теперь всегда доступен, "
+      "без ручного тумблера)", "q" in called, called)
 m.web_search = orig_search
 
 captured_payload = {}
@@ -163,25 +163,67 @@ m.requests.post = orig_post
 check("web_search: запрашивает 6 результатов, не 3 (живой тест поймал: с 3 топ-результаты "
       "были устаревшим блогом, правильный источник был только 5-м)",
       captured_payload.get("max_results") == 6, captured_payload)
+time.sleep(8)
 
 ans4 = m.get_suggestion(
     live_context="Собеседник: Как у вас дела сегодня?",
     last_speaker="Собеседник", last_text="Как у вас дела сегодня?",
-    use_search=False,
 )
 check("get_suggestion: светская реплика -> SKIP_TOKEN", m.SKIP_TOKEN in ans4, ans4)
+time.sleep(8)
 
-m.user_context = "Пять лет опыта в продажах SaaS."
-m.user_notes = "Не забыть упомянуть кейс с ростом выручки на 40%."
+print()
+print("=== Живой баг: 429 от Groq на tool-calling -> откат на 'поиска нет' крашил на 400 "
+      "(модель галлюцинировала несуществующий инструмент, раз промпт требовал поиск безусловно) ===")
+
+class FakeResp:
+    def __init__(self, status, payload):
+        self.status_code = status
+        self._payload = payload
+    def raise_for_status(self):
+        if self.status_code >= 400:
+            e = m.requests.exceptions.HTTPError(f"{self.status_code}")
+            e.response = self
+            raise e
+    def json(self):
+        return self._payload
+
+orig_post = m.requests.post
+def fallback_spy_post(url, json=None, **kw):
+    if "groq" in url and json and json.get("tools"):
+        return FakeResp(429, {})
+    return orig_post(url, json=json, **kw)
+m.requests.post = fallback_spy_post
+m.user_context = ""
+ans_fallback = m.get_suggestion(
+    live_context="Собеседник: Какая сейчас последняя версия React?",
+    last_speaker="Собеседник", last_text="Какая сейчас последняя версия React?",
+)
+m.requests.post = orig_post
+check("get_suggestion: откат на search-disabled после 429 -> не падает, есть ответ",
+      bool(ans_fallback), ans_fallback)
+time.sleep(8)
+
+print()
+print("=== Живой баг: пустой контекст + личный вопрос -> модель выдумывала биографию ===")
+ans_nobio = m.get_suggestion(
+    live_context="Собеседник: Расскажите о своём опыте с Python.",
+    last_speaker="Собеседник", last_text="Расскажите о своём опыте с Python.",
+)
+check("get_suggestion: пустой контекст, личный вопрос -> признаёт нехватку данных, не выдумывает",
+      "нет данных" in ans_nobio.lower() or "нет информации" in ans_nobio.lower(), ans_nobio)
+time.sleep(8)
+
+m.user_context = "Пять лет опыта в продажах SaaS. Не забыть упомянуть кейс с ростом выручки на 40%."
 m.knowledge_base_chunks.clear()
 add_kb("прайс.txt", "Продукт стоит 5000 рублей в месяц. Скидка 20% при годовой оплате.")
 ans5 = m.get_suggestion(
     live_context="Собеседник: Ваш продукт слишком дорогой.",
     last_speaker="Собеседник", last_text="Ваш продукт слишком дорогой, у конкурентов дешевле.",
-    use_search=False,
 )
 check("get_suggestion: подтянул скидку из базы знаний", "20" in ans5, ans5)
-check("get_suggestion: подтянул заметку про 40%", "40" in ans5, ans5)
+check("get_suggestion: подтянул кейс про 40% из контекста", "40" in ans5, ans5)
+time.sleep(8)
 
 m.transcript_lines.clear()
 m.transcript_lines.append(("Собеседник", "Расскажите о своём опыте с Python."))
@@ -213,8 +255,20 @@ check("report: короткий транскрипт (мало реплик 'Т�
 m.transcript_lines.clear()
 
 m.user_context = ""
-m.user_notes = ""
 m.knowledge_base_chunks.clear()
+m.transcript_lines.clear()
+
+print()
+print("=== Кодовое слово: изменяемо в рантайме ===")
+orig_hotword = m.HOTWORD
+m.HOTWORD = "тестовое слово"
+m.transcript_lines.clear()
+called = {}
+m.ask_for_suggestion = lambda *a, **kw: called.setdefault("called", (a, kw))
+m.handle_final_turn("Ты", "тестовое слово какой сегодня день")
+check("HOTWORD: новое слово реально ловится в handle_final_turn", "called" in called, called)
+m.ask_for_suggestion = orig_ask
+m.HOTWORD = orig_hotword
 m.transcript_lines.clear()
 
 backend_passed, backend_failed = len(passed), len(failed)
@@ -270,16 +324,11 @@ window.pywebview = { api: new Proxy({}, {
   const results = [];
   function check(name, cond, detail) { results.push({name, pass: !!cond, detail: detail !== undefined ? String(detail) : ''}); }
 
-  const searchBtn = document.getElementById('searchBtn');
-  toggleSearch();
-  check('toggleSearch: класс active пропал после клика (был включён по умолчанию)', searchBtn.classList.contains('active') === false);
-  check('toggleSearch: api.set_search вызван с false', window.__calls.some(c => c[0]==='set_search' && c[1][0]===false));
-  toggleSearch();
 
-  const notesBox = document.getElementById('notesBox');
-  notesBox.value = 'тестовая заметка';
-  onNotesChange();
-  check('onNotesChange: api.update_notes вызван с текстом', window.__calls.some(c => c[0]==='update_notes' && c[1][0]==='тестовая заметка'));
+  const hotwordBox = document.getElementById('hotwordBox');
+  hotwordBox.value = 'моё слово';
+  onHotwordChange();
+  check('onHotwordChange: api.update_hotword вызван с новым словом', window.__calls.some(c => c[0]==='update_hotword' && c[1][0]==='моё слово'));
 
   const ctxBox = document.getElementById('contextBox');
   ctxBox.value = 'тестовый контекст';

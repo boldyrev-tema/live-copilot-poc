@@ -104,7 +104,7 @@ WEB_SEARCH_TOOL = [{
 
 SKIP_TOKEN = "НЕТ_ОТВЕТА"
 
-SYSTEM_PROMPT = (
+SYSTEM_PROMPT_BASE = (
     "Ты live-суфлёр. У тебя есть:\n"
     "(а) Контекст пользователя — статичные факты (резюме, документы, заметки), загруженные заранее.\n"
     "(б) Живой транскрипт с метками «Ты» (сам пользователь) и «Собеседник» (второй участник).\n\n"
@@ -119,6 +119,12 @@ SYSTEM_PROMPT = (
     "релевантно конкретно последней реплике.\n"
     "- Если реплики от «Собеседник» ещё не было (только тишина или слова самого пользователя) — "
     "не выдумывай ответ на вопрос, которого не было; напиши «жду вопроса от собеседника».\n"
+    "- Если вопрос про ЛИЧНЫЙ опыт/биографию/проекты пользователя (не общий технический вопрос), "
+    "а в Контексте пользователя НЕТ данных об этом (контекст пуст или не по теме) — НЕ придумывай "
+    "личную историю, проекты или цифры от его имени. Прямо ответь, что в контексте нет данных об "
+    "этом, и предложи кратко и честно (например: «у меня есть опыт в этой области» без деталей, "
+    "которых не знаешь). Общие технические вопросы (не про личный опыт) — отвечай как обычно, по "
+    "своим знаниям, это не касается личной биографии.\n"
     f"- Различай два случая (важно не путать их):\n"
     f"  (а) СОЦИАЛЬНЫЙ РИТУАЛ — приветствие/прощание/вопрос о самочувствии-настроении-делах/"
     f"благодарность («как дела», «как настроение», «спасибо», «до свидания») — ДАЖЕ если формально "
@@ -127,14 +133,6 @@ SYSTEM_PROMPT = (
     f"(«Готовы?», «Киты, тюлени или моржи?», «Сколько лет длилась война?») — на это ВСЕГДА дай ответ "
     f"по существу, даже если вопрос короткий или звучит небрежно. Никогда не выводи {SKIP_TOKEN} на "
     f"случай (б).\n"
-    "- ОБЯЗАТЕЛЬНО используй поиск (вызови инструмент), если в вопросе есть слова "
-    "«последний/последняя/новый/новая/актуальный/актуальная/сейчас/в этом году» ИЛИ "
-    "спрашивают конкретную версию/дату/цифру/название конкурента, которых нет в контексте — "
-    "не отвечай по памяти в этих случаях, память может быть устаревшей.\n"
-    "- Среди результатов поиска источники противоречат друг другу по датам — ОБЫЧНОЕ дело "
-    "(старые статьи индексируются наравне с новыми). Бери версию/цифру с САМОЙ ПОЗДНЕЙ явно "
-    "указанной датой публикации, официальный источник (доки, GitHub releases, сайт продукта) "
-    "важнее блога/статьи с советами.\n"
     "- 1-3 предложения, разговорный тон, без буллетов.\n"
     "- ЗАПРЕЩЕНА markdown-разметка (никаких **, #, -, `` ` `` и т.п.) и LaTeX/математическая "
     "нотация (никаких $...$, \\sqrt, ^2, нижних индексов через _) — интерфейс показывает текст "
@@ -147,6 +145,30 @@ SYSTEM_PROMPT = (
     "Пример светской реплики:\n"
     "Собеседник: Как у вас дела сегодня?\n"
     f"Ты: {SKIP_TOKEN}"
+)
+
+# Живой тест поймал реальный краш: с SEARCH_DISABLED_RULE (инструмента нет в
+# запросе), но с безусловным "ОБЯЗАТЕЛЬНО используй поиск" в промпте, модель
+# всё равно пыталась вызвать инструмент — Groq отвечал 400 "Tool choice is
+# none, but model called a tool" (модель галлюцинировала несуществующий
+# инструмент "repo_browser.search"). Инструкция про поиск должна зависеть от
+# того, реально ли передан инструмент в ЭТОМ запросе, не быть безусловной.
+SEARCH_ENABLED_RULE = (
+    "- ОБЯЗАТЕЛЬНО используй поиск (вызови инструмент), если в вопросе есть слова "
+    "«последний/последняя/новый/новая/актуальный/актуальная/сейчас/в этом году» ИЛИ "
+    "спрашивают конкретную версию/дату/цифру/название конкурента, которых нет в контексте — "
+    "не отвечай по памяти в этих случаях, память может быть устаревшей.\n"
+    "- Среди результатов поиска источники противоречат друг другу по датам — ОБЫЧНОЕ дело "
+    "(старые статьи индексируются наравне с новыми). Бери версию/цифру с САМОЙ ПОЗДНЕЙ явно "
+    "указанной датой публикации, официальный источник (доки, GitHub releases, сайт продукта) "
+    "важнее блога/статьи с советами.\n"
+)
+SEARCH_DISABLED_RULE = (
+    "- Поиск сейчас ВЫКЛЮЧЕН, инструмента нет в этом запросе — НЕ пытайся вызывать какой-либо "
+    "инструмент, его не существует прямо сейчас. Если вопрос требует свежих/точных данных "
+    "(версия, дата, цифра, название конкурента), которых нет в контексте — отвечай по памяти, но "
+    "явно предупреди, что это может быть устаревшим (например: «по моим данным... но стоит "
+    "перепроверить, поиск сейчас выключен»).\n"
 )
 
 QUESTION_WORDS = (
@@ -178,7 +200,6 @@ transcript_lines = []  # list of (speaker, text)
 running = True
 user_context = ""
 file_context = ""
-user_notes = ""  # ручные шпаргалки/формулы — маленькие, всегда в промпте (как Заметки у ShadowHint)
 battlecards = []  # list of (trigger_phrase_lower, response_text) — заготовленный ответ по
                   # ключевой фразе, БЕЗ вызова LLM вообще (как живые battlecards у Clari
                   # Copilot) — быстрее и надёжнее для частых возражений ("дорого", "у
@@ -260,7 +281,6 @@ def build_kb_block(query: str) -> str:
 
 
 window = None  # заполняется после создания окна
-auto_search_enabled = True
 hotkey_listener = None  # pynput.keyboard.GlobalHotKeys, чтобы не собрался GC
 speechmatics_loop = None  # asyncio event loop, крутится в своём потоке
 mic_audio_queue = None  # asyncio.Queue — PCM с микрофона в сеанс "Ты"
@@ -443,7 +463,7 @@ def handle_final_turn(speaker: str, text: str):
         if tail:
             # Вопрос сказан в той же реплике, без паузы — отвечаем сразу.
             set_status(f"вопрос после «{HOTWORD}», спрашиваю…")
-            ask_for_suggestion(use_search=auto_search_enabled, override_question=tail)
+            ask_for_suggestion(override_question=tail)
             pending_hotword_armed_at = None
         else:
             # Кодовая фраза сказана одна — ждём вопрос следующей репликой.
@@ -454,7 +474,7 @@ def handle_final_turn(speaker: str, text: str):
     if speaker == "Ты" and pending_hotword_armed_at is not None:
         if time.time() - pending_hotword_armed_at < PENDING_HOTWORD_TIMEOUT:
             set_status("вопрос после кодовой фразы, спрашиваю…")
-            ask_for_suggestion(use_search=auto_search_enabled, override_question=text)
+            ask_for_suggestion(override_question=text)
         pending_hotword_armed_at = None
         return
 
@@ -468,7 +488,7 @@ def handle_final_turn(speaker: str, text: str):
             update_suggestion_ui(battlecard_answer, source="battlecard")
         elif looks_like_question(text) and not is_smalltalk(text):
             set_status("вопрос замечен, спрашиваю…")
-            ask_for_suggestion(use_search=auto_search_enabled)
+            ask_for_suggestion()
         else:
             set_status("слушаю")
     else:
@@ -549,7 +569,7 @@ def start_speechmatics_thread():
 def start_hotkey_listener():
     def on_hotkey():
         set_status("хоткей: спрашиваю…")
-        ask_for_suggestion(use_search=auto_search_enabled)
+        ask_for_suggestion()
 
     try:
         listener = keyboard.GlobalHotKeys({HOTKEY_COMBO: on_hotkey})
@@ -562,7 +582,7 @@ def start_hotkey_listener():
         return None
 
 
-def ask_for_suggestion(use_search: bool, override_question: str = None):
+def ask_for_suggestion(override_question: str = None):
     if not transcript_lines and not override_question:
         set_status("транскрипта пока нет")
         return
@@ -585,7 +605,7 @@ def ask_for_suggestion(use_search: bool, override_question: str = None):
                     if speaker == "Собеседник":
                         last_speaker, last_text = speaker, text
                         break
-            suggestion = get_suggestion(context_block, last_speaker, last_text, use_search,
+            suggestion = get_suggestion(context_block, last_speaker, last_text,
                                          direct_question=bool(override_question))
             if suggestion and SKIP_TOKEN in suggestion:
                 print(f"[LAT {time.strftime('%H:%M:%S')}] модель посчитала реплику светской, подсказку не показываю")
@@ -617,11 +637,15 @@ def web_search(query: str) -> str:
     return "\n".join(f"- {r['title']}: {r['content'][:300]}" for r in results) or "Ничего не найдено."
 
 
-def get_suggestion(live_context: str, last_speaker: str, last_text: str, use_search: bool,
+def get_suggestion(live_context: str, last_speaker: str, last_text: str,
                     direct_question: bool = False) -> str:
+    # Поиск больше не переключается вручную кнопкой — инструмент передаётся
+    # ВСЕГДА, а решение "искать сейчас или нет" целиком в промпте (маркеры
+    # свежести в SYSTEM_PROMPT_BASE). Кнопка раньше была грубым внешним
+    # рубильником поверх этой же логики — двойной контроль без пользы,
+    # и с реальным багом: если её выключали, модель всё равно пыталась
+    # вызвать инструмент, которого не было в запросе, и Groq падал с 400.
     user_ctx_block = f"Контекст пользователя:\n{user_context}\n\n" if user_context.strip() else ""
-    notes_block = f"Заметки пользователя:\n{user_notes}\n\n" if user_notes.strip() else ""
-    user_ctx_block += notes_block
     user_ctx_block += build_kb_block(last_text)
     if direct_question:
         # Вопрос пришёл через кодовую фразу/хоткей от самого пользователя — явно
@@ -640,13 +664,21 @@ def get_suggestion(live_context: str, last_speaker: str, last_text: str, use_sea
             f"Последняя реплика ({last_speaker}): {last_text}"
         )
 
-    messages = [
-        {"role": "system", "content": SYSTEM_PROMPT},
-        {"role": "user", "content": user_msg},
-    ]
+    base_messages = [{"role": "user", "content": user_msg}]
 
-    def call_groq(msgs, with_tools):
-        payload = {"messages": msgs, "max_tokens": 400, "model": LLM_MODEL, "reasoning_effort": "low"}
+    def call_groq(msgs, with_tools, first_call):
+        # Инструкция про поиск ("используй" / "инструмента нет") нужна только
+        # на первом вызове — после того как результаты поиска уже дописаны в
+        # историю сообщений, финальный вызов просто суммирует их, без нужды
+        # снова упоминать инструмент вообще (иначе рискуем повторить тот же
+        # баг про несуществующий tool call на финальном вызове).
+        if first_call:
+            rule = SEARCH_ENABLED_RULE if with_tools else SEARCH_DISABLED_RULE
+        else:
+            rule = ""
+        system_content = SYSTEM_PROMPT_BASE + rule
+        full_msgs = [{"role": "system", "content": system_content}] + msgs
+        payload = {"messages": full_msgs, "max_tokens": 400, "model": LLM_MODEL, "reasoning_effort": "low"}
         if with_tools:
             payload["tools"] = WEB_SEARCH_TOOL
         resp = requests.post(
@@ -658,11 +690,11 @@ def get_suggestion(live_context: str, last_speaker: str, last_text: str, use_sea
         return resp.json()["choices"][0]["message"]
 
     try:
-        msg = call_groq(messages, with_tools=use_search)
+        msg = call_groq(base_messages, with_tools=True, first_call=True)
     except requests.exceptions.HTTPError as e:
-        if use_search and e.response is not None and e.response.status_code == 429:
+        if e.response is not None and e.response.status_code == 429:
             set_status("лимит поиска, отвечаю без него")
-            msg = call_groq(messages, with_tools=False)
+            msg = call_groq(base_messages, with_tools=False, first_call=True)
         else:
             raise
 
@@ -670,7 +702,9 @@ def get_suggestion(live_context: str, last_speaker: str, last_text: str, use_sea
     if not tool_calls:
         return (msg.get("content") or "").strip()
 
-    messages.append({"role": "assistant", "content": msg.get("content") or "", "tool_calls": tool_calls})
+    messages_with_results = base_messages + [
+        {"role": "assistant", "content": msg.get("content") or "", "tool_calls": tool_calls}
+    ]
     for call in tool_calls:
         query = json.loads(call["function"]["arguments"]).get("query", "")
         set_status(f"гуглю: {query[:40]}…")
@@ -678,9 +712,9 @@ def get_suggestion(live_context: str, last_speaker: str, last_text: str, use_sea
             result_text = web_search(query)
         except Exception as e:
             result_text = f"Поиск не сработал: {e}"
-        messages.append({"role": "tool", "tool_call_id": call["id"], "content": result_text})
+        messages_with_results.append({"role": "tool", "tool_call_id": call["id"], "content": result_text})
 
-    final_msg = call_groq(messages, with_tools=False)
+    final_msg = call_groq(messages_with_results, with_tools=False, first_call=False)
     return (final_msg.get("content") or "").strip()
 
 
@@ -709,8 +743,6 @@ def ask_about_screenshot(region: bool = False):
             os.remove(shot_path)
 
             user_ctx_block = f"Контекст пользователя:\n{user_context}\n\n" if user_context.strip() else ""
-            if user_notes.strip():
-                user_ctx_block += f"Заметки пользователя:\n{user_notes}\n\n"
             prompt_text = (
                 f"{user_ctx_block}Если на скриншоте задача, вопрос, код для проверки или упражнение — "
                 "РЕШИ его. Сначала кратко покажи ход решения по шагам (что с чем считаешь/почему), "
@@ -849,19 +881,21 @@ def recompute_user_context(manual_text: str):
 # ---------------- JS-exposed API ----------------
 
 class Api:
-    def set_search(self, enabled):
-        global auto_search_enabled
-        auto_search_enabled = bool(enabled)
-
     def ask_screenshot(self, region=False):
         ask_about_screenshot(region=bool(region))
 
     def update_context(self, manual_text):
         recompute_user_context(manual_text or "")
 
-    def update_notes(self, text):
-        global user_notes
-        user_notes = text or ""
+    def update_hotword(self, text):
+        global HOTWORD
+        text = (text or "").strip().lower()
+        # Пустое кодовое слово было бы подстрокой ЛЮБОЙ реплики ("" in text —
+        # всегда True) — форсировало бы подсказку на каждое слово. Игнорируем
+        # пустой ввод (например, когда пользователь ещё печатает), а не даём
+        # HOTWORD стать пустым.
+        if text:
+            HOTWORD = text
 
     def get_report(self):
         generate_session_report()
@@ -942,7 +976,7 @@ class Api:
         transcript_lines.append(("Собеседник", text))
         update_transcript_ui("Собеседник", text)
         set_status("вопрос замечен, спрашиваю…" if looks_like_question(text) else "спрашиваю…")
-        ask_for_suggestion(use_search=auto_search_enabled)
+        ask_for_suggestion()
 
 
 # ---------------- HTML/CSS/JS UI ----------------
@@ -1061,10 +1095,6 @@ HTML = r"""
             title="Весь экран, без взаимодействия"><span>📷</span><span>Скрин</span></button>
     <button class="pill" onclick="pywebview.api.ask_screenshot(true)"
             title="Выделить область или окно мышью — точнее, меньше шума для ИИ"><span>🖼️</span><span>Область</span></button>
-    <button class="pill active" id="searchBtn" onclick="toggleSearch()"
-            title="Разрешить ИИ гуглить, если сам решит, что нужны свежие данные (не поиск по твоему клику)">
-      <span>🔍</span><span>Поиск</span>
-    </button>
     <button class="pill" id="transcriptBtn" onclick="toggleTranscript()"><span>📝</span><span>Транскрипт</span></button>
     <button class="pill" onclick="pywebview.api.get_report()"
             title="Отчёт по всей сессии: сильные/слабые места, оценка"><span>📊</span><span>Отчёт</span></button>
@@ -1104,8 +1134,8 @@ HTML = r"""
   </div>
 
   <div class="section">
-    <div class="section-label">Заметки <span style="text-transform:none; opacity:.6">— всегда в промпте</span></div>
-    <textarea id="notesBox" rows="2" placeholder="Шпаргалки, формулы, определения…" oninput="onNotesChange()"></textarea>
+    <div class="section-label">Кодовое слово <span style="text-transform:none; opacity:.6">— форсирует подсказку голосом</span></div>
+    <input type="text" id="hotwordBox" value="хороший вопрос" oninput="onHotwordChange()">
   </div>
 
   <div class="section">
@@ -1133,14 +1163,6 @@ HTML = r"""
 </div>
 
 <script>
-let searchOn = true;
-
-function toggleSearch() {
-  searchOn = !searchOn;
-  document.getElementById('searchBtn').classList.toggle('active', searchOn);
-  pywebview.api.set_search(searchOn);
-}
-
 function toggleTranscript() {
   const el = document.getElementById('transcriptSection');
   const willShow = el.style.display === 'none';
@@ -1210,8 +1232,8 @@ function addKbFile(name, totalChunks) {
 
 function clearKb() { pywebview.api.clear_knowledge_base(); }
 
-function onNotesChange() {
-  pywebview.api.update_notes(document.getElementById('notesBox').value);
+function onHotwordChange() {
+  pywebview.api.update_hotword(document.getElementById('hotwordBox').value);
 }
 
 function addBattlecard() {
