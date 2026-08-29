@@ -512,6 +512,30 @@ window.pywebview = { api: new Proxy({}, {
   addSuggestion('Скидка 20%', 'battlecard');
   check('addSuggestion(battlecard): label корректный', document.getElementById('feed').lastElementChild.querySelector('.who').textContent.includes('Карточка'));
 
+  const pastList = [
+    {filename: '2026-08-28_10-00-00.md', label: '2026-08-28 10:00'},
+    {filename: '2026-08-27_09-00-00.md', label: '2026-08-27 09:00'},
+  ];
+  renderPastSummaries(pastList);
+  const pastListEl = document.getElementById('pastCallsList');
+  check('renderPastSummaries: оба файла отрисованы', pastListEl.querySelectorAll('.past-call-item').length === 2, pastListEl.innerHTML);
+  check('renderPastSummaries: label первого файла виден', pastListEl.textContent.includes('2026-08-28 10:00'));
+
+  renderPastSummaries([]);
+  check('renderPastSummaries: пустой список -> нейтральное сообщение', pastListEl.textContent.includes('нет прошлых созвонов'), pastListEl.textContent);
+
+  renderSummaryContent('# Саммари\\n\\nТестовое содержимое.');
+  check('renderSummaryContent: текст саммари отображён', document.getElementById('pastCallContent').textContent.includes('Тестовое содержимое.'));
+
+  loadPastSummary('2026-08-28_10-00-00.md');
+  check('loadPastSummary: api.read_summary вызван с именем файла', window.__calls.some(c => c[0]==='read_summary' && c[1][0]==='2026-08-28_10-00-00.md'));
+
+  const pastSection = document.getElementById('pastCallsSection');
+  const wasVisible = pastSection.style.display !== 'none';
+  togglePastCalls();
+  check('togglePastCalls: переключает видимость секции', (pastSection.style.display !== 'none') !== wasVisible);
+  togglePastCalls();
+
   return results;
 }""")
 

@@ -1138,6 +1138,19 @@ HTML = r"""
   .file-chip { display: none; align-items: center; gap: 6px; background: var(--purple-bg);
                color: var(--purple); font-size: 11px; padding: 4px 8px; border-radius: 8px; margin-bottom: 6px; }
   .file-chip button { background: none; border: none; color: var(--purple); cursor: pointer; font-size: 11px; padding: 0; }
+  .past-call-item {
+    padding: 6px 8px; border-radius: 8px; cursor: pointer; font-size: 12px; color: var(--text-dim);
+    transition: background 0.15s ease, color 0.15s ease;
+  }
+  .past-call-item:hover { background: rgba(255,255,255,0.06); color: var(--text); }
+  .past-call-empty { font-size: 11px; color: var(--text-dim); padding: 4px 0; }
+  #pastCallContent {
+    font-size: 11px; color: var(--text-dim); white-space: pre-wrap; max-height: 160px;
+    overflow-y: auto; margin-top: 6px; padding: 8px; background: var(--panel);
+    border: 1px solid var(--border); border-radius: 10px;
+    opacity: 0; transition: opacity 0.2s ease;
+  }
+  #pastCallContent:not(:empty) { opacity: 1; }
   textarea, input[type=text] {
     width: 100%; background: var(--panel); border: 1px solid var(--border); border-radius: 10px;
     color: var(--text); font-size: 12px; padding: 8px; font-family: inherit; resize: none;
@@ -1225,6 +1238,14 @@ HTML = r"""
     <div class="file-chip" id="kbChip">📚 <span id="kbChipText"></span> <button onclick="clearKb()">✕</button></div>
   </div>
 
+  <div class="section" id="pastCallsSection" style="display:block">
+    <div class="section-label">
+      Прошлые созвоны
+      <button class="link-btn" onclick="togglePastCalls()">свернуть/развернуть</button>
+    </div>
+    <div id="pastCallsList"></div>
+    <div id="pastCallContent"></div>
+  </div>
 
   <div class="section" id="battlecardsSection" style="display:none">
     <div class="section-label">
@@ -1327,6 +1348,42 @@ function addKbFile(name, totalChunks) {
 
 function clearKb() { pywebview.api.clear_knowledge_base(); }
 
+function renderPastSummaries(files) {
+  const list = document.getElementById('pastCallsList');
+  list.innerHTML = '';
+  if (!files.length) {
+    const empty = document.createElement('div');
+    empty.className = 'past-call-empty';
+    empty.textContent = 'пока нет прошлых созвонов';
+    list.appendChild(empty);
+    return;
+  }
+  files.forEach(f => {
+    const item = document.createElement('div');
+    item.className = 'past-call-item';
+    item.textContent = f.label;
+    item.onclick = () => loadPastSummary(f.filename);
+    list.appendChild(item);
+  });
+}
+
+function renderSummaryContent(text) {
+  document.getElementById('pastCallContent').textContent = text;
+}
+
+function loadPastSummary(filename) {
+  pywebview.api.read_summary(filename).then(renderSummaryContent);
+}
+
+function loadPastSummaries() {
+  pywebview.api.list_past_summaries().then(renderPastSummaries);
+}
+
+function togglePastCalls() {
+  const el = document.getElementById('pastCallsSection');
+  el.style.display = el.style.display === 'none' ? 'block' : 'none';
+}
+
 function onHotwordChange() {
   pywebview.api.update_hotword(document.getElementById('hotwordBox').value);
 }
@@ -1393,6 +1450,8 @@ function sendTest() {
   input.value = '';
   pywebview.api.simulate_interlocutor(text);
 }
+
+loadPastSummaries();
 </script>
 </body>
 </html>
