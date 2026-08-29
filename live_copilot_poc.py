@@ -322,14 +322,20 @@ def _trigger_meeting_copilot_run():
     # поэтому широкий except, а не конкретные типы исключений.
     try:
         with open(MEETING_COPILOT_AUTO_RUN_LOG, "a") as log_file:
-            subprocess.Popen(
-                _build_auto_run_command(),
-                cwd=MEETING_COPILOT_DIR,
-                stdout=log_file,
-                stderr=subprocess.STDOUT,
-                start_new_session=True,  # не убивается при выходе родительского процесса
-            )
+            try:
+                subprocess.Popen(
+                    _build_auto_run_command(),
+                    cwd=MEETING_COPILOT_DIR,
+                    stdout=log_file,
+                    stderr=subprocess.STDOUT,
+                    start_new_session=True,  # не убивается при выходе родительского процесса
+                )
+            except Exception as e:
+                # Нет терминала на момент закрытия окна — печатать некуда,
+                # поэтому пишем в уже открытый лог-файл.
+                log_file.write(f"не удалось запустить meeting_copilot/run.py: {e}\n")
     except Exception as e:
+        # Последний резерв — не удалось даже открыть лог-файл.
         print(f"не удалось запустить meeting_copilot/run.py автоматически: {e}")
 
 

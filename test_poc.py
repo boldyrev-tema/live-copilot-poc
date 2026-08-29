@@ -308,9 +308,35 @@ check(
     trigger_did_not_raise,
     None if trigger_did_not_raise else trigger_exception,
 )
+# Popen здесь падает (несуществующий python), но open() лог-файла — нет: ошибка
+# должна попасть в лог-файл, а не потеряться в print() (некуда — фон, нет терминала).
+with open(m.MEETING_COPILOT_AUTO_RUN_LOG) as f:
+    log_contents = f.read()
+check(
+    "_trigger_meeting_copilot_run: ошибка Popen записана в лог-файл, не только в print",
+    "не удалось запустить meeting_copilot/run.py" in log_contents,
+    log_contents,
+)
 m.MEETING_COPILOT_VENV_PYTHON = orig_venv_python
 m.MEETING_COPILOT_AUTO_RUN_LOG = orig_auto_run_log
 shutil.rmtree(trigger_test_dir, ignore_errors=True)
+
+# Отдельно: если не удаётся открыть даже сам лог-файл (например, директория
+# MEETING_COPILOT_DIR не существует), _trigger_meeting_copilot_run всё равно не
+# должен падать — это последний резервный print(), а не запись в файл.
+m.MEETING_COPILOT_AUTO_RUN_LOG = "/nonexistent/dir/auto_run.log"
+try:
+    m._trigger_meeting_copilot_run()
+    open_failure_did_not_raise = True
+except Exception as e:
+    open_failure_did_not_raise = False
+    open_failure_exception = e
+check(
+    "_trigger_meeting_copilot_run: не бросает исключение, даже если не удалось открыть лог-файл",
+    open_failure_did_not_raise,
+    None if open_failure_did_not_raise else open_failure_exception,
+)
+m.MEETING_COPILOT_AUTO_RUN_LOG = orig_auto_run_log
 
 print()
 print("=== Чтение прошлых саммари из meeting_copilot/summaries ===")
