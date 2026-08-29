@@ -1150,6 +1150,7 @@ HTML = r"""
   }
   .past-call-item:hover { background: rgba(255,255,255,0.06); color: var(--text); }
   .past-call-empty { font-size: 11px; color: var(--text-dim); padding: 4px 0; }
+  #pastCallsList { max-height: 110px; overflow-y: auto; }
   #pastCallContent {
     font-size: 11px; color: var(--text-dim); white-space: pre-wrap; max-height: 160px;
     overflow-y: auto; margin-top: 6px; padding: 8px; background: var(--panel);
@@ -1244,13 +1245,15 @@ HTML = r"""
     <div class="file-chip" id="kbChip">📚 <span id="kbChipText"></span> <button onclick="clearKb()">✕</button></div>
   </div>
 
-  <div class="section" id="pastCallsSection" style="display:block">
+  <div class="section" id="pastCallsSection">
     <div class="section-label">
       Прошлые созвоны
       <button class="link-btn" onclick="togglePastCalls()">свернуть/развернуть</button>
     </div>
-    <div id="pastCallsList"></div>
-    <div id="pastCallContent"></div>
+    <div id="pastCallsBody" style="display:block">
+      <div id="pastCallsList"></div>
+      <div id="pastCallContent"></div>
+    </div>
   </div>
 
   <div class="section" id="battlecardsSection" style="display:none">
@@ -1357,7 +1360,7 @@ function clearKb() { pywebview.api.clear_knowledge_base(); }
 function renderPastSummaries(files) {
   const list = document.getElementById('pastCallsList');
   list.innerHTML = '';
-  if (!files.length) {
+  if (!files || !files.length) {
     const empty = document.createElement('div');
     empty.className = 'past-call-empty';
     empty.textContent = 'пока нет прошлых созвонов';
@@ -1382,11 +1385,16 @@ function loadPastSummary(filename) {
 }
 
 function loadPastSummaries() {
-  pywebview.api.list_past_summaries().then(renderPastSummaries);
+  pywebview.api.list_past_summaries().then(files => {
+    renderPastSummaries(files);
+    if (files && files.length > 0) {
+      loadPastSummary(files[0].filename);
+    }
+  });
 }
 
 function togglePastCalls() {
-  const el = document.getElementById('pastCallsSection');
+  const el = document.getElementById('pastCallsBody');
   el.style.display = el.style.display === 'none' ? 'block' : 'none';
 }
 
@@ -1457,7 +1465,7 @@ function sendTest() {
   pywebview.api.simulate_interlocutor(text);
 }
 
-loadPastSummaries();
+window.addEventListener('pywebviewready', loadPastSummaries);
 </script>
 </body>
 </html>

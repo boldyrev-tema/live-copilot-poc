@@ -556,11 +556,28 @@ window.pywebview = { api: new Proxy({}, {
   loadPastSummary('2026-08-28_10-00-00.md');
   check('loadPastSummary: api.read_summary вызван с именем файла', window.__calls.some(c => c[0]==='read_summary' && c[1][0]==='2026-08-28_10-00-00.md'));
 
+  const pastBody = document.getElementById('pastCallsBody');
   const pastSection = document.getElementById('pastCallsSection');
-  const wasVisible = pastSection.style.display !== 'none';
+  const wasVisible = pastBody.style.display !== 'none';
   togglePastCalls();
-  check('togglePastCalls: переключает видимость секции', (pastSection.style.display !== 'none') !== wasVisible);
+  check('togglePastCalls: переключает видимость ТЕЛА секции (не всей секции)', (pastBody.style.display !== 'none') !== wasVisible);
+  check('togglePastCalls: сама секция (и её кнопка-тоггл внутри .section-label) остаётся видимой', pastSection.style.display !== 'none');
   togglePastCalls();
+  check('togglePastCalls: возвращается в исходное состояние', (pastBody.style.display !== 'none') === wasVisible);
+
+  const pastListForAutoLoad = [
+    {filename: '2026-08-28_10-00-00.md', label: '2026-08-28 10:00'},
+    {filename: '2026-08-27_09-00-00.md', label: '2026-08-27 09:00'},
+  ];
+  window.__calls = [];
+  document.getElementById('pastCallContent').textContent = '';
+  renderPastSummaries(pastListForAutoLoad);
+  if (pastListForAutoLoad.length > 0) { loadPastSummary(pastListForAutoLoad[0].filename); }
+  check('loadPastSummaries-эквивалент: после рендера списка автоматически подгружается самый свежий файл',
+        window.__calls.some(c => c[0]==='read_summary' && c[1][0]==='2026-08-28_10-00-00.md'));
+
+  renderPastSummaries(undefined);
+  check('renderPastSummaries: не бросает исключение на undefined вместо пустого массива', pastListEl.textContent.includes('нет прошлых созвонов'));
 
   return results;
 }""")
