@@ -4,3 +4,4 @@ __pycache__/
 transcripts/
 *.png
 _screenshot.png
+auto_run.log

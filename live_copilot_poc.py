@@ -302,6 +302,35 @@ MIN_REPORT_CANDIDATE_CHARS = 60
 TRANSCRIPTS_DIR = os.path.join(os.path.dirname(__file__), "transcripts")
 transcript_file = None  # открывается в after_start(), одна сессия — один файл
 
+# meeting_copilot — сестринский проект, свой venv и свои зависимости (Groq/Jira-клиент
+# против Speechmatics/pywebview здесь) — поэтому запускается отдельным процессом, а не
+# импортируется. См. docs/superpowers/specs/2026-08-29-live-recap-panel-design.md
+# в meeting_copilot.
+MEETING_COPILOT_DIR = os.path.expanduser("~/Desktop/meeting_copilot")
+MEETING_COPILOT_VENV_PYTHON = os.path.join(MEETING_COPILOT_DIR, "venv", "bin", "python3")
+MEETING_COPILOT_AUTO_RUN_LOG = os.path.join(MEETING_COPILOT_DIR, "auto_run.log")
+
+
+def _build_auto_run_command():
+    return [MEETING_COPILOT_VENV_PYTHON, "run.py"]
+
+
+def _trigger_meeting_copilot_run():
+    # Фоновый, неблокирующий запуск: on_closed() не должен ждать LLM-вызовы run.py,
+    # и падение здесь (venv не найден и т.п.) не должно мешать закрытию окна суфлёра —
+    # поэтому широкий except, а не конкретные типы исключений.
+    try:
+        with open(MEETING_COPILOT_AUTO_RUN_LOG, "a") as log_file:
+            subprocess.Popen(
+                _build_auto_run_command(),
+                cwd=MEETING_COPILOT_DIR,
+                stdout=log_file,
+                stderr=subprocess.STDOUT,
+                start_new_session=True,  # не убивается при выходе родительского процесса
+            )
+    except Exception as e:
+        print(f"не удалось запустить meeting_copilot/run.py автоматически: {e}")
+
 
 # ---------------- JS bridge helpers ----------------
 
@@ -1369,6 +1398,7 @@ def on_closed():
             speechmatics_loop.call_soon_threadsafe(system_audio_queue.put_nowait, None)
     if transcript_file:
         transcript_file.close()
+    _trigger_meeting_copilot_run()
 
 
 def after_start():

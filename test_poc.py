@@ -25,8 +25,10 @@ live_copilot_poc.py (по аналогии с test_server.py у idea_bot / test_
 import http.server
 import json
 import os
+import shutil
 import socketserver
 import sys
+import tempfile
 import threading
 import time
 
@@ -272,6 +274,43 @@ check("HOTWORD: новое слово реально ловится в handle_fi
 m.ask_for_suggestion = orig_ask
 m.HOTWORD = orig_hotword
 m.transcript_lines.clear()
+
+print()
+print("=== Авто-запуск meeting_copilot/run.py при закрытии окна ===")
+check(
+    "_build_auto_run_command: венв-python meeting_copilot + run.py",
+    m._build_auto_run_command() == [m.MEETING_COPILOT_VENV_PYTHON, "run.py"],
+    m._build_auto_run_command(),
+)
+check(
+    "MEETING_COPILOT_DIR: указывает на сестринский проект",
+    m.MEETING_COPILOT_DIR.endswith("meeting_copilot"),
+    m.MEETING_COPILOT_DIR,
+)
+
+# _trigger_meeting_copilot_run() не должно падать, даже если сам venv не существует —
+# подменяем путь на заведомо отсутствующий, и лог-файл на временный (чтобы не писать
+# в реальный ~/Desktop/meeting_copilot/auto_run.log при прогоне тестов), и проверяем,
+# что вызов не бросает исключение.
+orig_venv_python = m.MEETING_COPILOT_VENV_PYTHON
+orig_auto_run_log = m.MEETING_COPILOT_AUTO_RUN_LOG
+trigger_test_dir = tempfile.mkdtemp()
+m.MEETING_COPILOT_VENV_PYTHON = "/nonexistent/path/python3"
+m.MEETING_COPILOT_AUTO_RUN_LOG = os.path.join(trigger_test_dir, "auto_run.log")
+try:
+    m._trigger_meeting_copilot_run()
+    trigger_did_not_raise = True
+except Exception as e:
+    trigger_did_not_raise = False
+    trigger_exception = e
+check(
+    "_trigger_meeting_copilot_run: не бросает исключение даже при отсутствующем venv",
+    trigger_did_not_raise,
+    None if trigger_did_not_raise else trigger_exception,
+)
+m.MEETING_COPILOT_VENV_PYTHON = orig_venv_python
+m.MEETING_COPILOT_AUTO_RUN_LOG = orig_auto_run_log
+shutil.rmtree(trigger_test_dir, ignore_errors=True)
 
 backend_passed, backend_failed = len(passed), len(failed)
 print()
