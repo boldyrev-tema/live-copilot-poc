@@ -312,6 +312,89 @@ m.MEETING_COPILOT_VENV_PYTHON = orig_venv_python
 m.MEETING_COPILOT_AUTO_RUN_LOG = orig_auto_run_log
 shutil.rmtree(trigger_test_dir, ignore_errors=True)
 
+print()
+print("=== Чтение прошлых саммари из meeting_copilot/summaries ===")
+check(
+    "_format_meeting_label: дата и время из имени файла-транскрипта",
+    m._format_meeting_label("2026-08-28_10-00-00") == "2026-08-28 10:00",
+    m._format_meeting_label("2026-08-28_10-00-00"),
+)
+
+summaries_test_dir = tempfile.mkdtemp()
+orig_summaries_dir = m.MEETING_COPILOT_SUMMARIES_DIR
+m.MEETING_COPILOT_SUMMARIES_DIR = summaries_test_dir
+try:
+    check(
+        "list_past_summaries: пустая папка -> пустой список",
+        m.list_past_summaries() == [],
+    )
+
+    with open(os.path.join(summaries_test_dir, "2026-08-27_09-00-00.md"), "w") as f:
+        f.write("# старое саммари")
+    with open(os.path.join(summaries_test_dir, "2026-08-28_10-00-00.md"), "w") as f:
+        f.write("# новое саммари")
+    with open(os.path.join(summaries_test_dir, "not_a_summary.txt"), "w") as f:
+        f.write("игнорируется — не .md")
+
+    listing = m.list_past_summaries()
+    check(
+        "list_past_summaries: только .md-файлы, 2 штуки",
+        len(listing) == 2,
+        listing,
+    )
+    check(
+        "list_past_summaries: новые сверху",
+        listing[0]["filename"] == "2026-08-28_10-00-00.md",
+        listing,
+    )
+    check(
+        "list_past_summaries: label читаемый",
+        listing[0]["label"] == "2026-08-28 10:00",
+        listing,
+    )
+
+    # Файл с именем не в ожидаемом формате не должен ронять весь список —
+    # тот же класс бага, что уже один раз ловили в meeting_copilot/run.py.
+    # Отдельно от проверки сортировки выше: позиция такого файла в списке не
+    # гарантируется (лексикографический порядок кривого имени непредсказуем),
+    # важно только что список не падает и что-то разумное показывает.
+    with open(os.path.join(summaries_test_dir, "bad-name.md"), "w") as f:
+        f.write("# файл с именем не по формату транскрипта")
+    listing_with_bad_name = m.list_past_summaries()
+    check(
+        "list_past_summaries: файл с кривым именем не роняет список (теперь 3 штуки)",
+        len(listing_with_bad_name) == 3,
+        listing_with_bad_name,
+    )
+    check(
+        "list_past_summaries: для кривого имени label = само имя файла (не исключение)",
+        any(
+            item["filename"] == "bad-name.md" and item["label"] == "bad-name.md"
+            for item in listing_with_bad_name
+        ),
+        listing_with_bad_name,
+    )
+
+    check(
+        "read_summary: возвращает реальное содержимое файла",
+        m.read_summary("2026-08-28_10-00-00.md") == "# новое саммари",
+    )
+    check(
+        "read_summary: несуществующий файл -> понятная ошибка, не исключение",
+        "не найден" in m.read_summary("нет_такого.md").lower(),
+    )
+    check(
+        "read_summary: path traversal через ../ отклонён",
+        "недопустимое" in m.read_summary("../../etc/passwd").lower(),
+    )
+    check(
+        "read_summary: абсолютный путь отклонён",
+        "недопустимое" in m.read_summary("/etc/passwd").lower(),
+    )
+finally:
+    m.MEETING_COPILOT_SUMMARIES_DIR = orig_summaries_dir
+    shutil.rmtree(summaries_test_dir, ignore_errors=True)
+
 backend_passed, backend_failed = len(passed), len(failed)
 print()
 print(f"=== Бэкенд итого: {backend_passed} passed, {backend_failed} failed ===")

@@ -309,6 +309,7 @@ transcript_file = None  # открывается в after_start(), одна се
 MEETING_COPILOT_DIR = os.path.expanduser("~/Desktop/meeting_copilot")
 MEETING_COPILOT_VENV_PYTHON = os.path.join(MEETING_COPILOT_DIR, "venv", "bin", "python3")
 MEETING_COPILOT_AUTO_RUN_LOG = os.path.join(MEETING_COPILOT_DIR, "auto_run.log")
+MEETING_COPILOT_SUMMARIES_DIR = os.path.join(MEETING_COPILOT_DIR, "summaries")
 
 
 def _build_auto_run_command():
@@ -330,6 +331,47 @@ def _trigger_meeting_copilot_run():
             )
     except Exception as e:
         print(f"не удалось запустить meeting_copilot/run.py автоматически: {e}")
+
+
+def _format_meeting_label(stem):
+    # Тот же формат, что meeting_copilot/summary_markdown.py:derive_meeting_label —
+    # дублируется здесь намеренно (2 строки), а не импортируется, чтобы не тянуть
+    # meeting_copilot как зависимость (см. комментарий у MEETING_COPILOT_DIR).
+    date_part, _, time_part = stem.partition("_")
+    hh, mm, _ss = time_part.split("-")
+    return f"{date_part} {hh}:{mm}"
+
+
+def list_past_summaries():
+    if not os.path.isdir(MEETING_COPILOT_SUMMARIES_DIR):
+        return []
+    files = sorted(
+        (f for f in os.listdir(MEETING_COPILOT_SUMMARIES_DIR) if f.endswith(".md")),
+        reverse=True,  # имена файлов — YYYY-MM-DD_HH-MM-SS.md, лексикографически = по дате
+    )
+    result = []
+    for f in files:
+        try:
+            label = _format_meeting_label(f[:-len(".md")])
+        except ValueError:
+            # Имя файла не в ожидаемом формате (кто-то положил сюда что-то руками) —
+            # тот же класс бага, что уже один раз ловили в meeting_copilot/run.py на
+            # derive_meeting_label. Не роняем весь список из-за одного файла — просто
+            # показываем сырое имя вместо распарсенной даты.
+            label = f
+        result.append({"filename": f, "label": label})
+    return result
+
+
+def read_summary(filename):
+    base = os.path.abspath(MEETING_COPILOT_SUMMARIES_DIR)
+    target = os.path.abspath(os.path.join(base, filename))
+    if not (target == base or target.startswith(base + os.sep)):
+        return "Ошибка: недопустимое имя файла."
+    if not os.path.isfile(target):
+        return "Файл не найден."
+    with open(target, encoding="utf-8") as f:
+        return f.read()
 
 
 # ---------------- JS bridge helpers ----------------
@@ -961,6 +1003,12 @@ class Api:
     def clear_knowledge_base(self):
         knowledge_base_chunks.clear()
         js("addKbFile(null, 0)")
+
+    def list_past_summaries(self):
+        return list_past_summaries()
+
+    def read_summary(self, filename):
+        return read_summary(filename)
 
     def add_battlecard(self, trigger, response):
         trigger = (trigger or "").strip().lower()
