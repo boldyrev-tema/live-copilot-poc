@@ -302,6 +302,83 @@ MIN_REPORT_CANDIDATE_CHARS = 60
 TRANSCRIPTS_DIR = os.path.join(os.path.dirname(__file__), "transcripts")
 transcript_file = None  # открывается в after_start(), одна сессия — один файл
 
+# meeting_copilot — сестринский проект, свой venv и свои зависимости (Groq/Jira-клиент
+# против Speechmatics/pywebview здесь) — поэтому запускается отдельным процессом, а не
+# импортируется. См. docs/superpowers/specs/2026-08-29-live-recap-panel-design.md
+# в meeting_copilot.
+MEETING_COPILOT_DIR = os.path.expanduser("~/Desktop/meeting_copilot")
+MEETING_COPILOT_VENV_PYTHON = os.path.join(MEETING_COPILOT_DIR, "venv", "bin", "python3")
+MEETING_COPILOT_AUTO_RUN_LOG = os.path.join(MEETING_COPILOT_DIR, "auto_run.log")
+MEETING_COPILOT_SUMMARIES_DIR = os.path.join(MEETING_COPILOT_DIR, "summaries")
+
+
+def _build_auto_run_command():
+    return [MEETING_COPILOT_VENV_PYTHON, "run.py"]
+
+
+def _trigger_meeting_copilot_run():
+    # Фоновый, неблокирующий запуск: on_closed() не должен ждать LLM-вызовы run.py,
+    # и падение здесь (venv не найден и т.п.) не должно мешать закрытию окна суфлёра —
+    # поэтому широкий except, а не конкретные типы исключений.
+    try:
+        with open(MEETING_COPILOT_AUTO_RUN_LOG, "a") as log_file:
+            try:
+                subprocess.Popen(
+                    _build_auto_run_command(),
+                    cwd=MEETING_COPILOT_DIR,
+                    stdout=log_file,
+                    stderr=subprocess.STDOUT,
+                    start_new_session=True,  # не убивается при выходе родительского процесса
+                )
+            except Exception as e:
+                # Нет терминала на момент закрытия окна — печатать некуда,
+                # поэтому пишем в уже открытый лог-файл.
+                log_file.write(f"не удалось запустить meeting_copilot/run.py: {e}\n")
+    except Exception as e:
+        # Последний резерв — не удалось даже открыть лог-файл.
+        print(f"не удалось запустить meeting_copilot/run.py автоматически: {e}")
+
+
+def _format_meeting_label(stem):
+    # Тот же формат, что meeting_copilot/summary_markdown.py:derive_meeting_label —
+    # дублируется здесь намеренно (2 строки), а не импортируется, чтобы не тянуть
+    # meeting_copilot как зависимость (см. комментарий у MEETING_COPILOT_DIR).
+    date_part, _, time_part = stem.partition("_")
+    hh, mm, _ss = time_part.split("-")
+    return f"{date_part} {hh}:{mm}"
+
+
+def list_past_summaries():
+    if not os.path.isdir(MEETING_COPILOT_SUMMARIES_DIR):
+        return []
+    files = sorted(
+        (f for f in os.listdir(MEETING_COPILOT_SUMMARIES_DIR) if f.endswith(".md")),
+        reverse=True,  # имена файлов — YYYY-MM-DD_HH-MM-SS.md, лексикографически = по дате
+    )
+    result = []
+    for f in files:
+        try:
+            label = _format_meeting_label(f[:-len(".md")])
+        except ValueError:
+            # Имя файла не в ожидаемом формате (кто-то положил сюда что-то руками) —
+            # тот же класс бага, что уже один раз ловили в meeting_copilot/run.py на
+            # derive_meeting_label. Не роняем весь список из-за одного файла — просто
+            # показываем сырое имя вместо распарсенной даты.
+            label = f
+        result.append({"filename": f, "label": label})
+    return result
+
+
+def read_summary(filename):
+    base = os.path.abspath(MEETING_COPILOT_SUMMARIES_DIR)
+    target = os.path.abspath(os.path.join(base, filename))
+    if not (target == base or target.startswith(base + os.sep)):
+        return "Ошибка: недопустимое имя файла."
+    if not os.path.isfile(target):
+        return "Файл не найден."
+    with open(target, encoding="utf-8") as f:
+        return f.read()
+
 
 # ---------------- JS bridge helpers ----------------
 
@@ -933,6 +1010,12 @@ class Api:
         knowledge_base_chunks.clear()
         js("addKbFile(null, 0)")
 
+    def list_past_summaries(self):
+        return list_past_summaries()
+
+    def read_summary(self, filename):
+        return read_summary(filename)
+
     def add_battlecard(self, trigger, response):
         trigger = (trigger or "").strip().lower()
         response = (response or "").strip()
@@ -1061,6 +1144,20 @@ HTML = r"""
   .file-chip { display: none; align-items: center; gap: 6px; background: var(--purple-bg);
                color: var(--purple); font-size: 11px; padding: 4px 8px; border-radius: 8px; margin-bottom: 6px; }
   .file-chip button { background: none; border: none; color: var(--purple); cursor: pointer; font-size: 11px; padding: 0; }
+  .past-call-item {
+    padding: 6px 8px; border-radius: 8px; cursor: pointer; font-size: 12px; color: var(--text-dim);
+    transition: background 0.15s ease, color 0.15s ease;
+  }
+  .past-call-item:hover { background: rgba(255,255,255,0.06); color: var(--text); }
+  .past-call-empty { font-size: 11px; color: var(--text-dim); padding: 4px 0; }
+  #pastCallsList { max-height: 110px; overflow-y: auto; }
+  #pastCallContent {
+    font-size: 11px; color: var(--text-dim); white-space: pre-wrap; max-height: 160px;
+    overflow-y: auto; margin-top: 6px; padding: 8px; background: var(--panel);
+    border: 1px solid var(--border); border-radius: 10px;
+    opacity: 0; transition: opacity 0.2s ease;
+  }
+  #pastCallContent:not(:empty) { opacity: 1; }
   textarea, input[type=text] {
     width: 100%; background: var(--panel); border: 1px solid var(--border); border-radius: 10px;
     color: var(--text); font-size: 12px; padding: 8px; font-family: inherit; resize: none;
@@ -1148,6 +1245,16 @@ HTML = r"""
     <div class="file-chip" id="kbChip">📚 <span id="kbChipText"></span> <button onclick="clearKb()">✕</button></div>
   </div>
 
+  <div class="section" id="pastCallsSection">
+    <div class="section-label">
+      Прошлые созвоны
+      <button class="link-btn" onclick="togglePastCalls()">свернуть/развернуть</button>
+    </div>
+    <div id="pastCallsBody" style="display:block">
+      <div id="pastCallsList"></div>
+      <div id="pastCallContent"></div>
+    </div>
+  </div>
 
   <div class="section" id="battlecardsSection" style="display:none">
     <div class="section-label">
@@ -1250,6 +1357,47 @@ function addKbFile(name, totalChunks) {
 
 function clearKb() { pywebview.api.clear_knowledge_base(); }
 
+function renderPastSummaries(files) {
+  const list = document.getElementById('pastCallsList');
+  list.innerHTML = '';
+  if (!files || !files.length) {
+    const empty = document.createElement('div');
+    empty.className = 'past-call-empty';
+    empty.textContent = 'пока нет прошлых созвонов';
+    list.appendChild(empty);
+    return;
+  }
+  files.forEach(f => {
+    const item = document.createElement('div');
+    item.className = 'past-call-item';
+    item.textContent = f.label;
+    item.onclick = () => loadPastSummary(f.filename);
+    list.appendChild(item);
+  });
+}
+
+function renderSummaryContent(text) {
+  document.getElementById('pastCallContent').textContent = text;
+}
+
+function loadPastSummary(filename) {
+  pywebview.api.read_summary(filename).then(renderSummaryContent);
+}
+
+function loadPastSummaries() {
+  pywebview.api.list_past_summaries().then(files => {
+    renderPastSummaries(files);
+    if (files && files.length > 0) {
+      loadPastSummary(files[0].filename);
+    }
+  });
+}
+
+function togglePastCalls() {
+  const el = document.getElementById('pastCallsBody');
+  el.style.display = el.style.display === 'none' ? 'block' : 'none';
+}
+
 function onHotwordChange() {
   pywebview.api.update_hotword(document.getElementById('hotwordBox').value);
 }
@@ -1316,6 +1464,8 @@ function sendTest() {
   input.value = '';
   pywebview.api.simulate_interlocutor(text);
 }
+
+window.addEventListener('pywebviewready', loadPastSummaries);
 </script>
 </body>
 </html>
@@ -1369,6 +1519,7 @@ def on_closed():
             speechmatics_loop.call_soon_threadsafe(system_audio_queue.put_nowait, None)
     if transcript_file:
         transcript_file.close()
+    _trigger_meeting_copilot_run()
 
 
 def after_start():

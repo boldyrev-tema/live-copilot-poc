@@ -25,8 +25,10 @@ live_copilot_poc.py (по аналогии с test_server.py у idea_bot / test_
 import http.server
 import json
 import os
+import shutil
 import socketserver
 import sys
+import tempfile
 import threading
 import time
 
@@ -273,6 +275,152 @@ m.ask_for_suggestion = orig_ask
 m.HOTWORD = orig_hotword
 m.transcript_lines.clear()
 
+print()
+print("=== Авто-запуск meeting_copilot/run.py при закрытии окна ===")
+check(
+    "_build_auto_run_command: венв-python meeting_copilot + run.py",
+    m._build_auto_run_command() == [m.MEETING_COPILOT_VENV_PYTHON, "run.py"],
+    m._build_auto_run_command(),
+)
+check(
+    "MEETING_COPILOT_DIR: указывает на сестринский проект",
+    m.MEETING_COPILOT_DIR.endswith("meeting_copilot"),
+    m.MEETING_COPILOT_DIR,
+)
+
+# _trigger_meeting_copilot_run() не должно падать, даже если сам venv не существует —
+# подменяем путь на заведомо отсутствующий, и лог-файл на временный (чтобы не писать
+# в реальный ~/Desktop/meeting_copilot/auto_run.log при прогоне тестов), и проверяем,
+# что вызов не бросает исключение.
+orig_venv_python = m.MEETING_COPILOT_VENV_PYTHON
+orig_auto_run_log = m.MEETING_COPILOT_AUTO_RUN_LOG
+trigger_test_dir = tempfile.mkdtemp()
+m.MEETING_COPILOT_VENV_PYTHON = "/nonexistent/path/python3"
+m.MEETING_COPILOT_AUTO_RUN_LOG = os.path.join(trigger_test_dir, "auto_run.log")
+try:
+    m._trigger_meeting_copilot_run()
+    trigger_did_not_raise = True
+except Exception as e:
+    trigger_did_not_raise = False
+    trigger_exception = e
+check(
+    "_trigger_meeting_copilot_run: не бросает исключение даже при отсутствующем venv",
+    trigger_did_not_raise,
+    None if trigger_did_not_raise else trigger_exception,
+)
+# Popen здесь падает (несуществующий python), но open() лог-файла — нет: ошибка
+# должна попасть в лог-файл, а не потеряться в print() (некуда — фон, нет терминала).
+with open(m.MEETING_COPILOT_AUTO_RUN_LOG) as f:
+    log_contents = f.read()
+check(
+    "_trigger_meeting_copilot_run: ошибка Popen записана в лог-файл, не только в print",
+    "не удалось запустить meeting_copilot/run.py" in log_contents,
+    log_contents,
+)
+m.MEETING_COPILOT_VENV_PYTHON = orig_venv_python
+m.MEETING_COPILOT_AUTO_RUN_LOG = orig_auto_run_log
+shutil.rmtree(trigger_test_dir, ignore_errors=True)
+
+# Отдельно: если не удаётся открыть даже сам лог-файл (например, директория
+# MEETING_COPILOT_DIR не существует), _trigger_meeting_copilot_run всё равно не
+# должен падать — это последний резервный print(), а не запись в файл.
+m.MEETING_COPILOT_AUTO_RUN_LOG = "/nonexistent/dir/auto_run.log"
+try:
+    m._trigger_meeting_copilot_run()
+    open_failure_did_not_raise = True
+except Exception as e:
+    open_failure_did_not_raise = False
+    open_failure_exception = e
+check(
+    "_trigger_meeting_copilot_run: не бросает исключение, даже если не удалось открыть лог-файл",
+    open_failure_did_not_raise,
+    None if open_failure_did_not_raise else open_failure_exception,
+)
+m.MEETING_COPILOT_AUTO_RUN_LOG = orig_auto_run_log
+
+print()
+print("=== Чтение прошлых саммари из meeting_copilot/summaries ===")
+check(
+    "_format_meeting_label: дата и время из имени файла-транскрипта",
+    m._format_meeting_label("2026-08-28_10-00-00") == "2026-08-28 10:00",
+    m._format_meeting_label("2026-08-28_10-00-00"),
+)
+
+summaries_test_dir = tempfile.mkdtemp()
+orig_summaries_dir = m.MEETING_COPILOT_SUMMARIES_DIR
+m.MEETING_COPILOT_SUMMARIES_DIR = summaries_test_dir
+try:
+    check(
+        "list_past_summaries: пустая папка -> пустой список",
+        m.list_past_summaries() == [],
+    )
+
+    with open(os.path.join(summaries_test_dir, "2026-08-27_09-00-00.md"), "w") as f:
+        f.write("# старое саммари")
+    with open(os.path.join(summaries_test_dir, "2026-08-28_10-00-00.md"), "w") as f:
+        f.write("# новое саммари")
+    with open(os.path.join(summaries_test_dir, "not_a_summary.txt"), "w") as f:
+        f.write("игнорируется — не .md")
+
+    listing = m.list_past_summaries()
+    check(
+        "list_past_summaries: только .md-файлы, 2 штуки",
+        len(listing) == 2,
+        listing,
+    )
+    check(
+        "list_past_summaries: новые сверху",
+        listing[0]["filename"] == "2026-08-28_10-00-00.md",
+        listing,
+    )
+    check(
+        "list_past_summaries: label читаемый",
+        listing[0]["label"] == "2026-08-28 10:00",
+        listing,
+    )
+
+    # Файл с именем не в ожидаемом формате не должен ронять весь список —
+    # тот же класс бага, что уже один раз ловили в meeting_copilot/run.py.
+    # Отдельно от проверки сортировки выше: позиция такого файла в списке не
+    # гарантируется (лексикографический порядок кривого имени непредсказуем),
+    # важно только что список не падает и что-то разумное показывает.
+    with open(os.path.join(summaries_test_dir, "bad-name.md"), "w") as f:
+        f.write("# файл с именем не по формату транскрипта")
+    listing_with_bad_name = m.list_past_summaries()
+    check(
+        "list_past_summaries: файл с кривым именем не роняет список (теперь 3 штуки)",
+        len(listing_with_bad_name) == 3,
+        listing_with_bad_name,
+    )
+    check(
+        "list_past_summaries: для кривого имени label = само имя файла (не исключение)",
+        any(
+            item["filename"] == "bad-name.md" and item["label"] == "bad-name.md"
+            for item in listing_with_bad_name
+        ),
+        listing_with_bad_name,
+    )
+
+    check(
+        "read_summary: возвращает реальное содержимое файла",
+        m.read_summary("2026-08-28_10-00-00.md") == "# новое саммари",
+    )
+    check(
+        "read_summary: несуществующий файл -> понятная ошибка, не исключение",
+        "не найден" in m.read_summary("нет_такого.md").lower(),
+    )
+    check(
+        "read_summary: path traversal через ../ отклонён",
+        "недопустимое" in m.read_summary("../../etc/passwd").lower(),
+    )
+    check(
+        "read_summary: абсолютный путь отклонён",
+        "недопустимое" in m.read_summary("/etc/passwd").lower(),
+    )
+finally:
+    m.MEETING_COPILOT_SUMMARIES_DIR = orig_summaries_dir
+    shutil.rmtree(summaries_test_dir, ignore_errors=True)
+
 backend_passed, backend_failed = len(passed), len(failed)
 print()
 print(f"=== Бэкенд итого: {backend_passed} passed, {backend_failed} failed ===")
@@ -389,6 +537,47 @@ window.pywebview = { api: new Proxy({}, {
 
   addSuggestion('Скидка 20%', 'battlecard');
   check('addSuggestion(battlecard): label корректный', document.getElementById('feed').lastElementChild.querySelector('.who').textContent.includes('Карточка'));
+
+  const pastList = [
+    {filename: '2026-08-28_10-00-00.md', label: '2026-08-28 10:00'},
+    {filename: '2026-08-27_09-00-00.md', label: '2026-08-27 09:00'},
+  ];
+  renderPastSummaries(pastList);
+  const pastListEl = document.getElementById('pastCallsList');
+  check('renderPastSummaries: оба файла отрисованы', pastListEl.querySelectorAll('.past-call-item').length === 2, pastListEl.innerHTML);
+  check('renderPastSummaries: label первого файла виден', pastListEl.textContent.includes('2026-08-28 10:00'));
+
+  renderPastSummaries([]);
+  check('renderPastSummaries: пустой список -> нейтральное сообщение', pastListEl.textContent.includes('нет прошлых созвонов'), pastListEl.textContent);
+
+  renderSummaryContent('# Саммари\\n\\nТестовое содержимое.');
+  check('renderSummaryContent: текст саммари отображён', document.getElementById('pastCallContent').textContent.includes('Тестовое содержимое.'));
+
+  loadPastSummary('2026-08-28_10-00-00.md');
+  check('loadPastSummary: api.read_summary вызван с именем файла', window.__calls.some(c => c[0]==='read_summary' && c[1][0]==='2026-08-28_10-00-00.md'));
+
+  const pastBody = document.getElementById('pastCallsBody');
+  const pastSection = document.getElementById('pastCallsSection');
+  const wasVisible = pastBody.style.display !== 'none';
+  togglePastCalls();
+  check('togglePastCalls: переключает видимость ТЕЛА секции (не всей секции)', (pastBody.style.display !== 'none') !== wasVisible);
+  check('togglePastCalls: сама секция (и её кнопка-тоггл внутри .section-label) остаётся видимой', pastSection.style.display !== 'none');
+  togglePastCalls();
+  check('togglePastCalls: возвращается в исходное состояние', (pastBody.style.display !== 'none') === wasVisible);
+
+  const pastListForAutoLoad = [
+    {filename: '2026-08-28_10-00-00.md', label: '2026-08-28 10:00'},
+    {filename: '2026-08-27_09-00-00.md', label: '2026-08-27 09:00'},
+  ];
+  window.__calls = [];
+  document.getElementById('pastCallContent').textContent = '';
+  renderPastSummaries(pastListForAutoLoad);
+  if (pastListForAutoLoad.length > 0) { loadPastSummary(pastListForAutoLoad[0].filename); }
+  check('loadPastSummaries-эквивалент: после рендера списка автоматически подгружается самый свежий файл',
+        window.__calls.some(c => c[0]==='read_summary' && c[1][0]==='2026-08-28_10-00-00.md'));
+
+  renderPastSummaries(undefined);
+  check('renderPastSummaries: не бросает исключение на undefined вместо пустого массива', pastListEl.textContent.includes('нет прошлых созвонов'));
 
   return results;
 }""")
